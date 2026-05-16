@@ -29,6 +29,11 @@ func mountAuthedAPI(r chi.Router, deps Deps) {
 		installChannelsAPIRoutes(sec, deps)
 		installLogsAPIRoutes(sec, deps)
 		installDLQAPIRoutes(sec, deps)
+		// Admin-only sub-group for invite codes.
+		sec.Group(func(adm chi.Router) {
+			adm.Use(wmw.RequireAdmin())
+			installInvitesAPIRoutes(adm, deps)
+		})
 	})
 }
 
@@ -48,5 +53,9 @@ func mountAuthedUI(r chi.Router, deps Deps) {
 		installChannelsUIRoutes(sec, deps)
 		installLogsUIRoutes(sec, deps)
 		installDLQUIRoutes(sec, deps)
+		sec.Group(func(adm chi.Router) {
+			adm.Use(wmw.RequireAdmin())
+			installInvitesUIRoutes(adm, deps)
+		})
 	})
 }

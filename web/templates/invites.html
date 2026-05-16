@@ -1,0 +1,41 @@
+{{ define "invites-page" }}{{ template "layout-open" . }}
+<div class="card">
+  <h1>邀请码（管理员）</h1>
+  <p class="muted">仅管理员可见。一次最多生成 100 张；TTL 为 0 表示永不过期。</p>
+  <table>
+    <thead><tr><th>Code</th><th>过期时间</th><th>状态</th><th>使用者</th><th>使用时间</th><th>创建时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {{ $csrf := .CSRF }}
+      {{ range .Invites }}
+      <tr>
+        <td><code>{{ .Code }}</code></td>
+        <td>{{ if .ExpiresAt }}{{ .ExpiresAt }}{{ else }}<span class="muted">永久</span>{{ end }}</td>
+        <td>{{ if .Used }}<span class="badge warn">已用</span>{{ else }}<span class="badge ok">未用</span>{{ end }}</td>
+        <td>{{ if .UsedBy }}{{ .UsedBy }}{{ else }}-{{ end }}</td>
+        <td>{{ .UsedAt }}</td>
+        <td>{{ .CreatedAt }}</td>
+        <td>
+          {{ if not .Used }}
+          <form method="POST" action="/ui/invites/{{ .Code }}/delete" onsubmit="return confirm('撤销该邀请码？');">
+            <input type="hidden" name="csrf" value="{{ $csrf }}">
+            <button class="danger">撤销</button>
+          </form>
+          {{ else }}<span class="muted">—</span>{{ end }}
+        </td>
+      </tr>
+      {{ end }}
+      {{ if not .Invites }}<tr><td colspan="7" class="muted">尚无邀请码</td></tr>{{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>新建邀请码</h2>
+  <form method="POST" action="/ui/invites">
+    <input type="hidden" name="csrf" value="{{ .CSRF }}">
+    <div class="field"><label>张数 (≤100)</label><input type="number" name="count" value="1" min="1" max="100"></div>
+    <div class="field"><label>TTL (秒, 0 = 永久)</label><input type="number" name="ttl_seconds" value="0" min="0"></div>
+    <button type="submit">生成</button>
+  </form>
+</div>
+{{ template "layout-close" . }}{{ end }}
