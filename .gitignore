@@ -1,11 +1,17 @@
 /pulseguard
 /pulseguard.exe
+/pulseguard-bin
+/scripts/smoke/smoke
+/scripts/smoke/smoke.exe
+/smoke
+/smoke.exe
 /data/
 *.db
 *.db-shm
 *.db-wal
 /.idea/
 /.vscode/
+/.omc/
 /dist/
 .env
 config.yaml
