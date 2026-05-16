@@ -160,6 +160,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 			RL:        rl,
 			Sender:    sender,
 			Clock:     clock,
+			Logger:    logger,
 		}, pipeline.WorkerCfg{
 			WorkerID:     fmt.Sprintf("w-%d-%d", pid, i),
 			PollInterval: cfg.Worker.PollInterval.Std(),

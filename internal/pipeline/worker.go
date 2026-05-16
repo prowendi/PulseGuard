@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
@@ -23,6 +25,17 @@ type WorkerDeps struct {
 	RL        domain.RateLimiter
 	Sender    domain.Sender
 	Clock     domain.Clock
+	// Logger receives structured records for every claim/sent/retry/dead
+	// branch. Nil is acceptable — a noop logger writing to io.Discard is
+	// substituted so call sites never need to nil-check.
+	Logger *slog.Logger
+}
+
+// noopLogger returns a slog.Logger that discards every record. Used when
+// callers leave WorkerDeps.Logger unset so the tick path can always emit
+// structured records unconditionally.
+func noopLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 // WorkerCfg captures the per-worker tunables.
@@ -53,6 +66,9 @@ func New(deps WorkerDeps, cfg WorkerCfg) *Worker {
 	if cfg.WorkerID == "" {
 		cfg.WorkerID = "worker-1"
 	}
+	if deps.Logger == nil {
+		deps.Logger = noopLogger()
+	}
 	return &Worker{deps: deps, cfg: cfg}
 }
 
@@ -65,11 +81,12 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 		didWork, err := w.tick(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			// Logging is the caller's responsibility (slog injection would
-			// add a hard dep on the logging package). For now we swallow
-			// per-tick errors so a transient SQL hiccup does not kill the
-			// whole worker — the next tick will retry.
-			_ = err
+			// Surface per-tick errors via the injected logger so the
+			// transient SQL hiccup that prompted the swallow at least
+			// shows up in production observability.
+			w.deps.Logger.Warn("pipeline.worker tick error",
+				"worker_id", w.cfg.WorkerID,
+				"err", err.Error())
 		}
 		if didWork {
 			continue
@@ -96,6 +113,11 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	if item == nil {
 		return false, nil
 	}
+	w.deps.Logger.Info("pipeline.worker claimed",
+		"worker_id", w.cfg.WorkerID,
+		"outbox_id", item.ID,
+		"channel_id", item.ChannelID,
+		"attempts", item.Attempts)
 
 	ch, err := w.deps.Channels.GetByID(ctx, item.TenantID, item.ChannelID)
 	if err != nil {
@@ -129,7 +151,18 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	}
 	if !allowed {
 		next := w.deps.Clock.Now().Add(time.Second)
-		_ = w.deps.Outbox.MarkRetry(ctx, item.ID, next, "rate-limited")
+		if err := w.deps.Outbox.MarkRetry(ctx, item.ID, next, "rate-limited"); err != nil {
+			w.deps.Logger.Warn("pipeline.worker mark retry (rate-limited) failed",
+				"worker_id", w.cfg.WorkerID,
+				"outbox_id", item.ID,
+				"channel_id", item.ChannelID,
+				"err", err.Error())
+		} else {
+			w.deps.Logger.Info("pipeline.worker rate-limited; retry queued",
+				"worker_id", w.cfg.WorkerID,
+				"outbox_id", item.ID,
+				"channel_id", item.ChannelID)
+		}
 		return true, nil
 	}
 
@@ -137,6 +170,11 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	payload := decodePayload(item.PayloadJSON)
 	text, err := render.Render(tpl, payload)
 	if err != nil {
+		w.deps.Logger.Warn("pipeline.worker render failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
 		w.dlq(ctx, item, "", fmt.Sprintf("render: %s", err.Error()))
 		return true, nil
 	}
@@ -184,7 +222,22 @@ func (w *Worker) handleTransient(ctx context.Context, item *domain.PushOutbox, r
 		return
 	}
 	next := w.deps.Clock.Now().Add(delay)
-	_ = w.deps.Outbox.MarkRetry(ctx, item.ID, next, ae.Error())
+	if err := w.deps.Outbox.MarkRetry(ctx, item.ID, next, ae.Error()); err != nil {
+		w.deps.Logger.Warn("pipeline.worker mark retry failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"attempts", item.Attempts,
+			"err", err.Error())
+		return
+	}
+	w.deps.Logger.Info("pipeline.worker retry scheduled",
+		"worker_id", w.cfg.WorkerID,
+		"outbox_id", item.ID,
+		"channel_id", item.ChannelID,
+		"attempts", item.Attempts,
+		"next_attempt_at", next.UTC().Format(time.RFC3339),
+		"reason", ae.Error())
 }
 
 func (w *Worker) markRetryOrDead(ctx context.Context, item *domain.PushOutbox, rendered string, sendErr error) {
@@ -198,7 +251,22 @@ func (w *Worker) markRetryOrDead(ctx context.Context, item *domain.PushOutbox, r
 		return
 	}
 	next := w.deps.Clock.Now().Add(delay)
-	_ = w.deps.Outbox.MarkRetry(ctx, item.ID, next, sendErr.Error())
+	if err := w.deps.Outbox.MarkRetry(ctx, item.ID, next, sendErr.Error()); err != nil {
+		w.deps.Logger.Warn("pipeline.worker mark retry failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"attempts", item.Attempts,
+			"err", err.Error())
+		return
+	}
+	w.deps.Logger.Info("pipeline.worker retry scheduled",
+		"worker_id", w.cfg.WorkerID,
+		"outbox_id", item.ID,
+		"channel_id", item.ChannelID,
+		"attempts", item.Attempts,
+		"next_attempt_at", next.UTC().Format(time.RFC3339),
+		"reason", sendErr.Error())
 }
 
 func (w *Worker) markSent(ctx context.Context, item *domain.PushOutbox, rendered string, msgID int64) {
@@ -213,8 +281,31 @@ func (w *Worker) markSent(ctx context.Context, item *domain.PushOutbox, rendered
 		Status:       domain.LogSent,
 		Attempts:     item.Attempts,
 	}
-	_ = w.deps.Logs.Insert(ctx, log)
-	_ = w.deps.Outbox.MarkSent(ctx, item.ID, w.deps.Clock.Now())
+	if err := w.deps.Logs.Insert(ctx, log); err != nil {
+		w.deps.Logger.Warn("pipeline.worker insert sent log failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+	}
+	if err := w.deps.Outbox.MarkSent(ctx, item.ID, w.deps.Clock.Now()); err != nil {
+		// MarkSent failure is the worst-case observability gap: the row
+		// stays in_flight and the cleanup loop will reclaim it as retry,
+		// leading to a duplicate send. Promote to Error so on-call notices.
+		w.deps.Logger.Error("pipeline.worker mark sent failed (risk of duplicate)",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"tg_message_id", msgID,
+			"err", err.Error())
+		return
+	}
+	w.deps.Logger.Info("pipeline.worker sent",
+		"worker_id", w.cfg.WorkerID,
+		"outbox_id", item.ID,
+		"channel_id", item.ChannelID,
+		"attempts", item.Attempts,
+		"tg_message_id", msgID)
 }
 
 func (w *Worker) dlq(ctx context.Context, item *domain.PushOutbox, rendered string, reason string) {
@@ -233,7 +324,14 @@ func (w *Worker) dlq(ctx context.Context, item *domain.PushOutbox, rendered stri
 		LastError:    reason,
 		Attempts:     item.Attempts,
 	}
-	_ = w.deps.DLQ.Insert(ctx, dl)
+	if err := w.deps.DLQ.Insert(ctx, dl); err != nil {
+		// Losing a DLQ row erases audit history; surface as Error.
+		w.deps.Logger.Error("pipeline.worker DLQ insert failed (audit gap)",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+	}
 	log := &domain.PushLog{
 		OutboxID:     &item.ID,
 		ChannelID:    item.ChannelID,
@@ -244,8 +342,27 @@ func (w *Worker) dlq(ctx context.Context, item *domain.PushOutbox, rendered stri
 		Error:        &errStr,
 		Attempts:     item.Attempts,
 	}
-	_ = w.deps.Logs.Insert(ctx, log)
-	_ = w.deps.Outbox.MarkDead(ctx, item.ID, reason)
+	if err := w.deps.Logs.Insert(ctx, log); err != nil {
+		w.deps.Logger.Warn("pipeline.worker insert dead log failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+	}
+	if err := w.deps.Outbox.MarkDead(ctx, item.ID, reason); err != nil {
+		w.deps.Logger.Error("pipeline.worker mark dead failed (row stuck in_flight)",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+		return
+	}
+	w.deps.Logger.Warn("pipeline.worker dead",
+		"worker_id", w.cfg.WorkerID,
+		"outbox_id", item.ID,
+		"channel_id", item.ChannelID,
+		"attempts", item.Attempts,
+		"reason", reason)
 }
 
 // decodePayload turns the outbox JSON payload back into a map. Malformed

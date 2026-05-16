@@ -1,8 +1,10 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -262,6 +264,26 @@ type workerFixture struct {
 	rl     *fakeRL
 	clk    *domain.FakeClock
 	w      *Worker
+	logBuf *syncBuffer
+}
+
+// syncBuffer is a goroutine-safe wrapper around bytes.Buffer so multiple
+// worker goroutines can write slog records concurrently in tests.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
 }
 
 func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerFixture {
@@ -276,6 +298,8 @@ func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerF
 	tpls := &fakeTplRepo{m: map[int64]*domain.Template{
 		100: {ID: 100, TenantID: 1, Name: "t", ParseMode: domain.ParseMarkdownV2, Body: "Hello {{ .name }}"},
 	}}
+	logBuf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	deps := WorkerDeps{
 		Outbox:    newFakeOutbox(),
 		Channels:  chans,
@@ -286,6 +310,7 @@ func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerF
 		RL:        &fakeRL{allow: rlAllow},
 		Sender:    sender,
 		Clock:     clk,
+		Logger:    logger,
 	}
 	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
 	w := New(deps, cfg)
@@ -299,6 +324,7 @@ func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerF
 		rl:     deps.RL.(*fakeRL),
 		clk:    clk,
 		w:      w,
+		logBuf: logBuf,
 	}
 }
 
@@ -589,4 +615,79 @@ func TestWorkerRunProcessesItem(t *testing.T) {
 	cancel()
 	<-doneRun
 	t.Fatalf("item not sent after 2s, status=%q", f.outbox.get(item.ID).Status)
+}
+
+// TestWorkerLoggerEmitsClaimAndSent asserts that the injected slog logger
+// actually receives the key lifecycle events the audit demands (claim +
+// sent). Regression guard against R1 — the worker must never go silent.
+func TestWorkerLoggerEmitsClaimAndSent(t *testing.T) {
+	sender := &fakeSender{resp: func(call int) (int64, error) { return 42, nil }}
+	f := newWorkerFixture(t, sender, true)
+	item := f.enqueue(t)
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	logs := f.logBuf.String()
+	if !strings.Contains(logs, "pipeline.worker claimed") {
+		t.Fatalf("expected 'pipeline.worker claimed' log, got:\n%s", logs)
+	}
+	if !strings.Contains(logs, "pipeline.worker sent") {
+		t.Fatalf("expected 'pipeline.worker sent' log, got:\n%s", logs)
+	}
+	wantOutboxAttr := "outbox_id=" // slog text handler uses key=value
+	if !strings.Contains(logs, wantOutboxAttr) {
+		t.Fatalf("expected outbox_id attr in logs, got:\n%s", logs)
+	}
+	// Confirm the actual id appears somewhere.
+	if !strings.Contains(logs, "outbox_id="+itoa(item.ID)) {
+		t.Fatalf("expected outbox_id=%d in logs, got:\n%s", item.ID, logs)
+	}
+}
+
+// TestWorkerLoggerNilSafe ensures the constructor substitutes a noop
+// logger when WorkerDeps.Logger is nil — the worker must never panic.
+func TestWorkerLoggerNilSafe(t *testing.T) {
+	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
+	deps := WorkerDeps{
+		Outbox:    newFakeOutbox(),
+		Channels:  &fakeChannelRepo{m: map[int64]*domain.Channel{}},
+		Bots:      &fakeBotRepo{m: map[int64]*domain.Bot{}},
+		Templates: &fakeTplRepo{m: map[int64]*domain.Template{}},
+		Logs:      &fakeLogRepo{},
+		DLQ:       &fakeDLQ{},
+		RL:        &fakeRL{allow: true},
+		Sender:    &fakeSender{resp: func(call int) (int64, error) { return 0, nil }},
+		Clock:     clk,
+		Logger:    nil, // intentionally nil
+	}
+	w := New(deps, WorkerCfg{WorkerID: "wnil", PollInterval: time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()})
+	if _, err := w.tick(context.Background()); err != nil {
+		t.Fatalf("tick with nil logger: %v", err)
+	}
+}
+
+func itoa(v int64) string {
+	// Avoid importing strconv just for the test helper; the worker test
+	// file already pulls in fmt indirectly via testing assertions, but we
+	// prefer a tiny inline implementation to keep the test deps minimal.
+	if v == 0 {
+		return "0"
+	}
+	neg := false
+	if v < 0 {
+		neg = true
+		v = -v
+	}
+	var digits [20]byte
+	i := len(digits)
+	for v > 0 {
+		i--
+		digits[i] = byte('0' + v%10)
+		v /= 10
+	}
+	if neg {
+		i--
+		digits[i] = '-'
+	}
+	return string(digits[i:])
 }
