@@ -1,33 +1,50 @@
+# PulseGuard 示例配置
+#
+# 所有字段都可以用 env 覆盖，命名规则：PULSEGUARD_<SECTION>_<FIELD>
+# 例如：PULSEGUARD_SERVER_LISTEN_ADDR=":9090"
+#
+# 本文件按 dev 默认值填写，可直接：
+#   pulseguard -config config.example.yaml
+# 在本地跑起来（cookie_secure=false，bootstrap admin 默认值）。
+# 生产环境务必修改所有 REQUIRED 字段并把 cookie_secure 改回 true。
+
 server:
-  listen_addr: ":8080"
-  base_url: "http://localhost:8080"
-  read_timeout: 10s
-  write_timeout: 30s
-  shutdown_timeout: 15s
+  listen_addr: ":8080"                              # HTTP 监听地址（host:port）
+  base_url: "http://localhost:8080"                 # 对外可访问的 URL，用于拼 push_token 链接
+  read_timeout: 10s                                 # 单请求读超时
+  write_timeout: 30s                                # 单请求写超时
+  shutdown_timeout: 15s                             # graceful shutdown 等待 worker 收尾的上限
+
 database:
-  path: "./data/pulseguard.db"
-  busy_timeout: 5s
+  path: "./data/pulseguard.db"                      # SQLite 文件路径；目录会自动创建
+  busy_timeout: 5s                                  # PRAGMA busy_timeout，并发写争用时退让窗口
+
 security:
-  master_key_b64: ""        # 32-byte base64; required
-  session_ttl: 336h         # 14d
-  cookie_secure: true
-  bcrypt_cost: 10
+  master_key_b64: "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE="  # REQUIRED 32B base64 主密钥，用于 AES-GCM 加密 bot_token；生产请用 `openssl rand -base64 32` 重新生成
+  session_ttl: 336h                                 # session cookie TTL，默认 14 天
+  cookie_secure: false                              # dev=false / 生产 https=true
+  bcrypt_cost: 10                                   # bcrypt 哈希轮数，越大越慢越安全
+
 worker:
-  count: 4
-  poll_interval: 1s
-  max_attempts: 6
-  inflight_reclaim_after: 60s
-  backoff_schedule: [1s, 5s, 15s, 60s, 5m, 15m]
+  count: 4                                          # outbox worker goroutine 数量
+  poll_interval: 1s                                 # 没有待处理任务时的轮询休眠
+  max_attempts: 6                                   # 单条推送最大尝试次数，超过进 DLQ
+  inflight_reclaim_after: 60s                       # 抢占超过此时长的 in_flight 行视为僵尸，回收
+  backoff_schedule: [1s, 5s, 15s, 60s, 5m, 15m]     # 第 N 次失败的退避间隔；超出列表按最后一个值
+
 telegram:
-  api_base: "https://api.telegram.org"
-  http_timeout: 10s
+  api_base: "https://api.telegram.org"              # TG Bot API 基础地址；私有部署/测试可改
+  http_timeout: 10s                                 # 调 TG API 的整体超时
+
 bootstrap:
-  initial_admin_email: ""
-  initial_admin_password: ""
+  initial_admin_email: "admin@example.com"          # REQUIRED 首启时自动创建的 admin 邮箱；空库才生效
+  initial_admin_password: "ChangeMeNow!2026"        # REQUIRED 初始 admin 密码；首次登录后必须改
+
 logging:
-  level: "info"
-  format: "json"
+  level: "info"                                     # debug / info / warn / error
+  format: "json"                                    # json（推荐）或 text
+
 cleanup:
-  push_logs_keep_days: 30
-  dedup_keys_sweep_interval: 1h
-  sessions_sweep_interval: 1h
+  push_logs_keep_days: 30                           # push_logs 保留天数，超过被清理 worker 归档
+  dedup_keys_sweep_interval: 1h                     # 清理过期 dedup_keys 的周期
+  sessions_sweep_interval: 1h                       # 清理过期 sessions 的周期

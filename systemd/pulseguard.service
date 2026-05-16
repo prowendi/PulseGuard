@@ -1,0 +1,52 @@
+[Unit]
+Description=PulseGuard alerting push platform
+Documentation=https://github.com/wendi/pulseguard
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulseguard
+Group=pulseguard
+
+# 数据目录（SQLite 文件、WAL/SHM 默认落这里；按需通过 config.yaml 覆盖）
+WorkingDirectory=/var/lib/pulseguard
+ExecStart=/usr/local/bin/pulseguard -config /etc/pulseguard/config.yaml
+
+# 启动失败自动拉起；常用故障如端口被占用、配置错误会重试
+Restart=on-failure
+RestartSec=5s
+
+# 信号语义与 graceful shutdown：cmd/pulseguard/main.go 监听 SIGINT/SIGTERM
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+
+# 标准输出日志走 journald；与 logger=json 配合可被 vector/promtail 抓
+StandardOutput=journal
+StandardError=journal
+
+# ─── 安全加固 ────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# 唯一允许写的目录：数据目录
+ReadWritePaths=/var/lib/pulseguard
+
+# 只允许 IPv4/IPv6/UNIX，调 TG API 需要
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# 环境变量可写在这里覆盖 config.yaml（PULSEGUARD_* 前缀）
+# Environment=PULSEGUARD_SECURITY_MASTER_KEY_B64=...
+# 推荐用 EnvironmentFile 把密钥放到 0600 文件
+# EnvironmentFile=-/etc/pulseguard/pulseguard.env
+
+[Install]
+WantedBy=multi-user.target
