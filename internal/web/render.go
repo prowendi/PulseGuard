@@ -3,7 +3,6 @@ package web
 import (
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"net/http"
 	"sync"
@@ -39,9 +38,15 @@ var (
 // We use html/template (not text/template) here because UI output is
 // HTML — the message-template engine in internal/render handles raw TG
 // payloads separately.
+//
+// Naming convention: each page file declares a single {{ define "<slug>-page" }}
+// block that opens the shared layout, drops its content, then closes the
+// layout. Partials live in partials/ and are defined under their own names
+// (e.g. {{ define "bot-row" }}). Render and RenderPartial select between
+// the two by template name.
 func templates() (*template.Template, error) {
 	tmplOnce.Do(func() {
-		root := template.New("layout").Funcs(uiFuncs)
+		root := template.New("__pulseguard__").Funcs(uiFuncs)
 		fsys := templatesFS()
 		var paths []string
 		err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, walkErr error) error {
@@ -84,51 +89,19 @@ var uiFuncs = template.FuncMap{
 	},
 }
 
-// Render writes the named template (typically "layout") with the supplied
-// page data. Each handler is expected to pass an instance of pageData (or
-// any struct that exposes Title/Tenant/Active/CSRF/Flash plus a content
-// template clone — see partial rendering below).
-//
-// If the handler only needs a partial fragment (HTMX swap) it should
-// call RenderPartial directly with the partial's template name.
-func Render(w http.ResponseWriter, status int, contentName string, data any) error {
+// Render writes the named full-page template (typically "<slug>-page") with
+// the supplied data. The data MUST embed the same fields the layout/nav
+// templates consume (Title, Tenant, Active, CSRF, Flash) — usually via
+// the pageData helper defined in pagedata.go.
+func Render(w http.ResponseWriter, status int, pageName string, data any) error {
 	t, err := templates()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return err
 	}
-	// Clone so concurrent renders can override the "content" block without
-	// stepping on each other.
-	clone, err := t.Clone()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return err
-	}
-	// Lookup the page's content fragment and attach it as "content".
-	page := clone.Lookup(contentName)
-	if page == nil {
-		err := fmt.Errorf("template %q not found", contentName)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return err
-	}
-	// Define "content" in the clone by re-parsing the page's source under
-	// that name. html/template does not let us alias template names
-	// directly, so we wrap the lookup in an ExecuteTemplate call below.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	return executeWithContent(clone, w, contentName, data)
-}
-
-// executeWithContent renders "layout" with the supplied content block.
-// The content template MUST define {{ define "content" }} ... {{ end }};
-// page-level files in web/templates/*.html follow this convention.
-func executeWithContent(t *template.Template, w io.Writer, contentName string, data any) error {
-	// All page templates declare both their content block and we just
-	// invoke "layout" which references "content" → resolved by html/template.
-	// We do not need to alias here because Parse already registered the
-	// "content" block from the page file.
-	_ = contentName
-	return t.ExecuteTemplate(w, "layout", data)
+	return t.ExecuteTemplate(w, pageName, data)
 }
 
 // RenderPartial writes a single defined block (e.g. partials/bot_row.html).

@@ -1,0 +1,22 @@
+{{ define "register-page" }}{{ template "layout-open" . }}
+<div class="card" style="max-width:420px;margin:60px auto 0">
+  <h1>注册</h1>
+  <form method="POST" action="/ui/register">
+    <input type="hidden" name="csrf" value="{{ .CSRF }}">
+    <div class="field">
+      <label>邮箱</label>
+      <input type="email" name="email" autofocus required>
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input type="password" name="password" minlength="6" required>
+    </div>
+    <div class="field">
+      <label>邀请码</label>
+      <input type="text" name="invite_code" required>
+    </div>
+    <button type="submit">注册</button>
+    <a href="/ui/login" class="muted" style="margin-left:12px">已有账号？登录</a>
+  </form>
+</div>
+{{ template "layout-close" . }}{{ end }}

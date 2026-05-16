@@ -1,4 +1,4 @@
-{{ define "layout" }}<!doctype html>
+{{ define "layout-open" }}<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -11,8 +11,9 @@
 <body>
 {{ template "nav" . }}
 <main class="container">
-  {{ if .Flash }}{{ template "flash" .Flash }}{{ end }}
-  {{ template "content" . }}
-</main>
+{{ if .Flash }}{{ template "flash" .Flash }}{{ end }}
+{{ end }}
+
+{{ define "layout-close" }}</main>
 </body>
 </html>{{ end }}
