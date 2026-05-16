@@ -20,11 +20,13 @@ import (
 
 	"github.com/wendi/pulseguard/internal/auth"
 	"github.com/wendi/pulseguard/internal/bootstrap"
+	"github.com/wendi/pulseguard/internal/cmdrun"
 	"github.com/wendi/pulseguard/internal/config"
 	"github.com/wendi/pulseguard/internal/domain"
 	"github.com/wendi/pulseguard/internal/pipeline"
 	"github.com/wendi/pulseguard/internal/platform"
 	"github.com/wendi/pulseguard/internal/platform/telegram"
+	"github.com/wendi/pulseguard/internal/scripting"
 	"github.com/wendi/pulseguard/internal/store"
 	"github.com/wendi/pulseguard/internal/tg"
 	"github.com/wendi/pulseguard/internal/web"
@@ -129,6 +131,8 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	dlq := store.NewDeadLetterRepo(db, clock)
 	dedupRepo := store.NewDedupRepo(db)
 	rl := store.NewRateLimitRepo(db, clock)
+	commands := store.NewCommandRepo(db, clock)
+	subscribers := store.NewSubscriberRepo(db, clock)
 
 	// ── 4. Sender (real TG client, unless overridden by tests).
 	var sender domain.Sender = tg.New(cfg.Telegram)
@@ -211,6 +215,14 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	// (e.g. pointing at an httptest Telegram backend). In production
 	// we wire in the real Telegram factory using the same api_base /
 	// http_timeout as the outbound Sender so behaviour is uniform.
+	//
+	// The Telegram factory also accepts a CommandDispatcher built on
+	// top of the Starlark Executor + commands/subscribers repos so
+	// inbound `/<name>` messages route to per-tenant scripts.
+	scriptHTTP := scripting.NewHTTPClient()
+	scriptExec := &scripting.Executor{HTTP: scriptHTTP}
+	dispatcher := cmdrun.New(commands, scriptExec, subscribers)
+
 	listenerFactories := ov.BotListenerFactories
 	if len(listenerFactories) == 0 {
 		tgTimeout := cfg.Telegram.HTTPTimeout.Std()
@@ -219,9 +231,10 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 		}
 		listenerFactories = []platform.Factory{
 			telegram.NewFactory(telegram.FactoryOptions{
-				APIBase: cfg.Telegram.APIBase,
-				HTTP:    &http.Client{Timeout: tgTimeout},
-				Logger:  logger,
+				APIBase:    cfg.Telegram.APIBase,
+				HTTP:       &http.Client{Timeout: tgTimeout},
+				Logger:     logger,
+				Dispatcher: dispatcher,
 			}),
 		}
 	}
@@ -257,6 +270,9 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 		Logs:         logs,
 		DLQ:          dlq,
 		RL:           rl,
+		Commands:     commands,
+		Subscribers:  subscribers,
+		ScriptExec:   scriptExec,
 		Cipher:       cipher,
 		Auth:         authSvc,
 		Ingest:       ingest,

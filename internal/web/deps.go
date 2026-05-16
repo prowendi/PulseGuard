@@ -10,6 +10,7 @@ import (
 	"github.com/wendi/pulseguard/internal/domain"
 	"github.com/wendi/pulseguard/internal/pipeline"
 	"github.com/wendi/pulseguard/internal/platform"
+	"github.com/wendi/pulseguard/internal/scripting"
 	"github.com/wendi/pulseguard/internal/store"
 )
 
@@ -17,23 +18,31 @@ import (
 // repo is an interface; tests can substitute fakes by populating the
 // struct directly.
 type Deps struct {
-	Cfg       *config.Config
-	Logger    *slog.Logger
-	Tenants   domain.TenantRepo
-	Invites   domain.InviteRepo
-	Sessions  domain.SessionRepo
-	Bots      domain.BotRepo
-	Templates domain.TemplateRepo
-	Channels  domain.ChannelRepo
-	Outbox    domain.OutboxRepo
-	Logs      domain.LogRepo
-	DLQ       domain.DeadLetterRepo
-	RL        domain.RateLimiter
-	Cipher    *store.Cipher
-	Auth      *auth.Service
-	Ingest    *pipeline.Ingestor
-	TG        domain.Sender
-	Clock     domain.Clock
+	Cfg         *config.Config
+	Logger      *slog.Logger
+	Tenants     domain.TenantRepo
+	Invites     domain.InviteRepo
+	Sessions    domain.SessionRepo
+	Bots        domain.BotRepo
+	Templates   domain.TemplateRepo
+	Channels    domain.ChannelRepo
+	Outbox      domain.OutboxRepo
+	Logs        domain.LogRepo
+	DLQ         domain.DeadLetterRepo
+	RL          domain.RateLimiter
+	Commands    domain.CommandRepo
+	Subscribers domain.SubscriberRepo
+	Cipher      *store.Cipher
+	Auth        *auth.Service
+	Ingest      *pipeline.Ingestor
+	TG          domain.Sender
+	Clock       domain.Clock
+
+	// ScriptExec is the Starlark executor used by the commands "test
+	// run" endpoint. nil-safe: handlers fall back to a stub when unset,
+	// so httptest harnesses that do not exercise the endpoint can skip
+	// constructing one.
+	ScriptExec *scripting.Executor
 
 	// BotListeners (optional) drives the per-bot long-poll loops the
 	// /api/v1/bots CRUD layer needs to (re)start when a bot is created,
