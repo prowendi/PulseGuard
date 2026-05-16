@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -306,5 +307,92 @@ def handle(args):
 	}
 	if got := atomic.LoadInt32(&hitCount); got != 1 {
 		t.Fatalf("redirect appears to have been followed: server hit %d times, want 1", got)
+	}
+}
+
+// ─── SSRF — IPv6 / metadata end-to-end coverage ────────────────────────
+//
+// `isBlockedIP` unit tests cover the deny tables; these tests prove the
+// scripting → CheckURL → BaseClient chain still rejects the canonical
+// SSRF targets when reached via the Starlark `http.get` builtin. They
+// complement the existing IPv4 deny tests above.
+
+// TestHTTP_SSRF_IPv6Private covers fc00::/7 (Unique Local Address, the
+// IPv6 equivalent of RFC1918). Without an end-to-end test a regression
+// in CheckURL's IPv6-literal parsing could quietly open this class.
+func TestHTTP_SSRF_IPv6Private(t *testing.T) {
+	c := newTestHTTPClient(false)
+	e := &Executor{HTTP: c}
+	_, err := e.Execute(context.Background(), `
+def handle(args):
+    return http.get("http://[fc00::1]/")
+`, nil)
+	if err == nil || !errors.Is(err, ErrUnsafeHost) {
+		t.Fatalf("err = %v, want ErrUnsafeHost", err)
+	}
+}
+
+// TestHTTP_SSRF_IPv6Loopback covers ::1. Same rationale as the IPv4
+// 127.0.0.0/8 test, but for bracketed IPv6 literals so we exercise
+// the SplitHostPort code path that strips the brackets.
+func TestHTTP_SSRF_IPv6Loopback(t *testing.T) {
+	c := newTestHTTPClient(false)
+	e := &Executor{HTTP: c}
+	_, err := e.Execute(context.Background(), `
+def handle(args):
+    return http.get("http://[::1]/")
+`, nil)
+	if err == nil || !errors.Is(err, ErrUnsafeHost) {
+		t.Fatalf("err = %v, want ErrUnsafeHost", err)
+	}
+}
+
+// TestHTTP_SSRF_MetadataEndpoint covers the cloud-metadata IP
+// (169.254.169.254). The path test (TestHTTP_SSRF_LinkLocalBlocked)
+// already hits a metadata sub-path; this one targets the bare host so
+// regression in link-local detection cannot hide behind path parsing.
+func TestHTTP_SSRF_MetadataEndpoint(t *testing.T) {
+	c := newTestHTTPClient(false)
+	e := &Executor{HTTP: c}
+	_, err := e.Execute(context.Background(), `
+def handle(args):
+    return http.get("http://169.254.169.254/")
+`, nil)
+	if err == nil || !errors.Is(err, ErrUnsafeHost) {
+		t.Fatalf("err = %v, want ErrUnsafeHost", err)
+	}
+}
+
+// TestHTTP_BodyCapZeroFallback verifies the fallback at
+// http_module.go:162-164. When MaxBodyBytes is left at its zero
+// value the do() path must apply the 1 MiB hard-coded cap, not read
+// unbounded — otherwise a malicious upstream could exhaust worker
+// memory with a chunked endless body. We feed 1.25 MiB and assert the
+// script sees exactly 1 MiB.
+func TestHTTP_BodyCapZeroFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		chunk := strings.Repeat("b", 1<<16)
+		// 20 × 64 KiB = 1.25 MiB total
+		for i := 0; i < 20; i++ {
+			_, _ = w.Write([]byte(chunk))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestHTTPClient(true)
+	c.MaxBodyBytes = 0 // exercise the fallback branch
+	e := &Executor{HTTP: c}
+	res, err := e.Execute(context.Background(), `
+def handle(args):
+    r = http.get(args[0])
+    return str(len(r["body"]))
+`, []string{srv.URL})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	const oneMiB = 1 << 20
+	if res.Return != strconv.Itoa(oneMiB) {
+		t.Fatalf("body length = %s, want %d (1 MiB fallback)", res.Return, oneMiB)
 	}
 }
