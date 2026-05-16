@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -107,6 +108,9 @@ func TestBotsAPILifecycle(t *testing.T) {
 	if created.BotTokenLast4 != "1234" {
 		t.Fatalf("token last4 = %q", created.BotTokenLast4)
 	}
+	if created.Platform != "telegram" {
+		t.Fatalf("platform = %q want telegram", created.Platform)
+	}
 
 	// 3. Get by id.
 	resp, err = client.Get(h.fullURL("/api/v1/bots/" + strInt64(created.ID)))
@@ -173,6 +177,79 @@ func TestBotsAPIBadToken(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestBotsAPIPlatformExplicitTelegram(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	body := mustJSON(t, map[string]any{
+		"name":      "platbot",
+		"bot_token": "12345:AAAabcXYZ_-1234",
+		"platform":  "telegram",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	var created botView
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if created.Platform != "telegram" {
+		t.Fatalf("platform = %q want telegram", created.Platform)
+	}
+}
+
+func TestBotsAPIPlatformDefaultsTelegram(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	// Omit platform entirely; server should fill in "telegram".
+	body := mustJSON(t, map[string]any{
+		"name":      "defplat",
+		"bot_token": "12345:AAAabcXYZ_-1234",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	var created botView
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if created.Platform != "telegram" {
+		t.Fatalf("platform = %q want telegram (default)", created.Platform)
+	}
+}
+
+func TestBotsAPIPlatformUnknownRejected(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	body := mustJSON(t, map[string]any{
+		"name":      "wrong",
+		"bot_token": "12345:AAAabcXYZ_-1234",
+		"platform":  "discord",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s want 400", resp.StatusCode, drain(resp))
 	}
 	resp.Body.Close()
 }
@@ -248,6 +325,55 @@ func TestUIBotsRenders(t *testing.T) {
 	}
 	if !strings.Contains(body, `action="/ui/bots"`) {
 		t.Fatalf("body missing create form")
+	}
+	// Platform column + select.
+	if !strings.Contains(body, ">Platform<") {
+		t.Fatalf("table missing Platform header")
+	}
+	if !strings.Contains(body, `name="platform"`) {
+		t.Fatalf("form missing platform select")
+	}
+	if !strings.Contains(body, `value="telegram"`) {
+		t.Fatalf("form missing telegram option")
+	}
+}
+
+func TestUIBotsCreateShowsFlashHint(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("name", "uibot")
+	form.Set("bot_token", "12345:AAAabcXYZ_-XX99")
+	form.Set("description", "ui-created")
+	form.Set("platform", "telegram")
+
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/ui/bots"),
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("ui create: %v", err)
+	}
+	bs, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s", resp.StatusCode, string(bs)[:400])
+	}
+	body := string(bs)
+	// Flash hint about /start should be rendered as a flash partial.
+	if !strings.Contains(body, "/start") {
+		t.Fatalf("missing /start hint, body=%s", body[:400])
+	}
+	if !strings.Contains(body, "Chat ID") {
+		t.Fatalf("missing Chat ID hint, body=%s", body[:400])
+	}
+	// New row should appear in the table with platform column.
+	if !strings.Contains(body, "uibot") {
+		t.Fatalf("new bot not rendered in table")
 	}
 }
 
