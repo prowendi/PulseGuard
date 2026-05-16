@@ -9,6 +9,7 @@ import (
 	"github.com/wendi/pulseguard/internal/config"
 	"github.com/wendi/pulseguard/internal/domain"
 	"github.com/wendi/pulseguard/internal/pipeline"
+	"github.com/wendi/pulseguard/internal/platform"
 	"github.com/wendi/pulseguard/internal/store"
 )
 
@@ -33,6 +34,12 @@ type Deps struct {
 	Ingest    *pipeline.Ingestor
 	TG        domain.Sender
 	Clock     domain.Clock
+
+	// BotListeners (optional) drives the per-bot long-poll loops the
+	// /api/v1/bots CRUD layer needs to (re)start when a bot is created,
+	// updated, or deleted. nil-safe: handlers no-op when unset so unit
+	// tests that don't wire it in still work.
+	BotListeners *platform.Manager
 
 	// RateLimit is the per-IP request-per-second budget for /api/*.
 	// Defaults to 100 when zero.

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -14,12 +15,13 @@ import (
 // is NEVER echoed in full; only the last 4 characters are exposed via
 // the masked field so the UI can hint at which key is configured.
 type botView struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Platform      string `json:"platform"`
+	Description   string `json:"description,omitempty"`
 	BotTokenLast4 string `json:"bot_token_last4"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 func toBotView(b *domain.Bot) botView {
@@ -28,23 +30,26 @@ func toBotView(b *domain.Bot) botView {
 		last4 = b.BotToken[len(b.BotToken)-4:]
 	}
 	return botView{
-		ID:          b.ID,
-		Name:        b.Name,
-		Description: b.Description,
+		ID:            b.ID,
+		Name:          b.Name,
+		Platform:      b.Platform,
+		Description:   b.Description,
 		BotTokenLast4: last4,
-		CreatedAt:   b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		CreatedAt:     b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:     b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 }
 
 type botCreatePayload struct {
 	Name        string `json:"name"`
+	Platform    string `json:"platform"`
 	BotToken    string `json:"bot_token"`
 	Description string `json:"description"`
 }
 
 type botUpdatePayload struct {
 	Name        *string `json:"name,omitempty"`
+	Platform    *string `json:"platform,omitempty"`
 	BotToken    *string `json:"bot_token,omitempty"`
 	Description *string `json:"description,omitempty"`
 }
@@ -81,6 +86,14 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 		}
 		p.Name = strings.TrimSpace(p.Name)
 		p.BotToken = strings.TrimSpace(p.BotToken)
+		p.Platform = strings.TrimSpace(p.Platform)
+		if p.Platform == "" {
+			p.Platform = domain.PlatformTelegram
+		}
+		if !domain.IsValidPlatform(p.Platform) {
+			writeError(w, r, http.StatusBadRequest, "VALIDATION", "unknown platform")
+			return
+		}
 		if !validateName(w, r, p.Name, 64) {
 			return
 		}
@@ -92,6 +105,7 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 		bot := &domain.Bot{
 			TenantID:    tenant.ID,
 			Name:        p.Name,
+			Platform:    p.Platform,
 			BotToken:    p.BotToken,
 			Description: p.Description,
 		}
@@ -99,6 +113,11 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
+		// Best-effort: spawn the listener for this fresh bot so the
+		// user can immediately /start it from Telegram and learn the
+		// chat_id. Manager.Start is idempotent — duplicate Starts
+		// replace any prior goroutine.
+		startBotListener(deps, bot)
 		writeJSON(w, http.StatusCreated, toBotView(bot))
 	}
 }
@@ -135,12 +154,25 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
+		prevToken := existing.BotToken
+		prevPlatform := existing.Platform
 		if p.Name != nil {
 			name := strings.TrimSpace(*p.Name)
 			if !validateName(w, r, name, 64) {
 				return
 			}
 			existing.Name = name
+		}
+		if p.Platform != nil {
+			plat := strings.TrimSpace(*p.Platform)
+			if plat == "" {
+				plat = domain.PlatformTelegram
+			}
+			if !domain.IsValidPlatform(plat) {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "unknown platform")
+				return
+			}
+			existing.Platform = plat
 		}
 		if p.BotToken != nil {
 			tok := strings.TrimSpace(*p.BotToken)
@@ -157,6 +189,11 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
+		// Restart the listener when the credentials that drive it
+		// changed; otherwise leave it running.
+		if existing.BotToken != prevToken || existing.Platform != prevPlatform {
+			restartBotListener(deps, existing)
+		}
 		writeJSON(w, http.StatusOK, toBotView(existing))
 	}
 }
@@ -172,6 +209,43 @@ func apiBotDelete(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
+		stopBotListener(deps, id)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// startBotListener spawns a per-bot listener goroutine via the Manager.
+// Errors are logged, never fatal — a bot whose listener cannot start
+// (e.g. unknown platform) is still usable for outbound pushes.
+func startBotListener(deps Deps, bot *domain.Bot) {
+	if deps.BotListeners == nil || bot == nil {
+		return
+	}
+	// Use a background context so the listener survives this HTTP
+	// request returning. The runtime's parent context (passed when
+	// the Manager was constructed) governs lifecycle.
+	if err := deps.BotListeners.Start(context.Background(), bot); err != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("bot listener start failed",
+				"bot_id", bot.ID,
+				"tenant_id", bot.TenantID,
+				"platform", bot.Platform,
+				"err", err.Error())
+		}
+	}
+}
+
+func restartBotListener(deps Deps, bot *domain.Bot) {
+	if deps.BotListeners == nil || bot == nil {
+		return
+	}
+	deps.BotListeners.Stop(bot.ID)
+	startBotListener(deps, bot)
+}
+
+func stopBotListener(deps Deps, botID int64) {
+	if deps.BotListeners == nil {
+		return
+	}
+	deps.BotListeners.Stop(botID)
 }

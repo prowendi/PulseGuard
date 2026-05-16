@@ -23,6 +23,8 @@ import (
 	"github.com/wendi/pulseguard/internal/config"
 	"github.com/wendi/pulseguard/internal/domain"
 	"github.com/wendi/pulseguard/internal/pipeline"
+	"github.com/wendi/pulseguard/internal/platform"
+	"github.com/wendi/pulseguard/internal/platform/telegram"
 	"github.com/wendi/pulseguard/internal/store"
 	"github.com/wendi/pulseguard/internal/tg"
 	"github.com/wendi/pulseguard/internal/web"
@@ -48,6 +50,13 @@ type Overrides struct {
 	// cleanup loops have all been spawned. Tests rely on this signal
 	// before issuing requests.
 	ReadyCh chan<- struct{}
+
+	// BotListenerFactories, when non-empty, REPLACES the default set
+	// of bot-listener factories (one per platform). Tests pass a fake
+	// factory pointing at an httptest Telegram backend so create-bot
+	// → /start → reply-with-chat-id can be asserted without touching
+	// api.telegram.org.
+	BotListenerFactories []platform.Factory
 }
 
 // Run is the production entrypoint. It instantiates a real
@@ -198,25 +207,62 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 		return fmt.Errorf("runtime: bootstrap: %w", err)
 	}
 
+	// ── 8b. Bot listener manager. Tests may inject a fake factory
+	// (e.g. pointing at an httptest Telegram backend). In production
+	// we wire in the real Telegram factory using the same api_base /
+	// http_timeout as the outbound Sender so behaviour is uniform.
+	listenerFactories := ov.BotListenerFactories
+	if len(listenerFactories) == 0 {
+		tgTimeout := cfg.Telegram.HTTPTimeout.Std()
+		if tgTimeout <= 0 {
+			tgTimeout = 30 * time.Second
+		}
+		listenerFactories = []platform.Factory{
+			telegram.NewFactory(telegram.FactoryOptions{
+				APIBase: cfg.Telegram.APIBase,
+				HTTP:    &http.Client{Timeout: tgTimeout},
+				Logger:  logger,
+			}),
+		}
+	}
+	listenerMgr := platform.NewManager(logger, listenerFactories...)
+
+	// Boot a listener for every bot already in the DB so a process
+	// restart resumes onboarding loops without operator action.
+	if existing, err := bots.ListAll(ctx); err != nil {
+		logger.Warn("runtime: list bots failed; listeners deferred to CRUD", "err", err.Error())
+	} else {
+		for _, b := range existing {
+			if err := listenerMgr.Start(ctx, b); err != nil {
+				logger.Warn("runtime: bot listener start failed",
+					"bot_id", b.ID,
+					"tenant_id", b.TenantID,
+					"platform", b.Platform,
+					"err", err.Error())
+			}
+		}
+	}
+
 	// ── 9. HTTP handler.
 	handler := web.NewServer(web.Deps{
-		Cfg:       cfg,
-		Logger:    logger,
-		Tenants:   tenants,
-		Invites:   invites,
-		Sessions:  sessions,
-		Bots:      bots,
-		Templates: templates,
-		Channels:  channels,
-		Outbox:    outbox,
-		Logs:      logs,
-		DLQ:       dlq,
-		RL:        rl,
-		Cipher:    cipher,
-		Auth:      authSvc,
-		Ingest:    ingest,
-		TG:        sender,
-		Clock:     clock,
+		Cfg:          cfg,
+		Logger:       logger,
+		Tenants:      tenants,
+		Invites:      invites,
+		Sessions:     sessions,
+		Bots:         bots,
+		Templates:    templates,
+		Channels:     channels,
+		Outbox:       outbox,
+		Logs:         logs,
+		DLQ:          dlq,
+		RL:           rl,
+		Cipher:       cipher,
+		Auth:         authSvc,
+		Ingest:       ingest,
+		TG:           sender,
+		Clock:        clock,
+		BotListeners: listenerMgr,
 	})
 
 	// ── 10. Start HTTP listener on configured addr (":0" auto-port).
@@ -289,6 +335,11 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	if err := srv.Shutdown(shutCtx); err != nil {
 		logger.Warn("runtime: http server shutdown error", "error", err.Error())
 	}
+
+	// Tear down bot listeners before waiting on the WG — each listener
+	// drains its long-poll via its own ctx cancel; Shutdown blocks
+	// until they've all returned so the DB close below stays safe.
+	listenerMgr.Shutdown()
 
 	// Workers + cleanup observe ctx.Done() and exit. We then wait for
 	// all goroutines so the DB close below is safe.

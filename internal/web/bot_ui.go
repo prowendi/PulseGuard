@@ -56,19 +56,30 @@ func uiBotCreate(deps Deps) http.HandlerFunc {
 		name := strings.TrimSpace(r.PostForm.Get("name"))
 		token := strings.TrimSpace(r.PostForm.Get("bot_token"))
 		desc := r.PostForm.Get("description")
+		platform := strings.TrimSpace(r.PostForm.Get("platform"))
+		if platform == "" {
+			platform = domain.PlatformTelegram
+		}
 		tenant := wmw.Tenant(r.Context())
+		if !domain.IsValidPlatform(platform) {
+			uiBotListWithFlash(w, r, deps, tenant, "error", "未知 platform")
+			return
+		}
 		if name == "" || !botTokenPattern.MatchString(token) {
 			uiBotListWithFlash(w, r, deps, tenant, "error", "请提供合法的 name 与 bot_token")
 			return
 		}
 		bot := &domain.Bot{
-			TenantID: tenant.ID, Name: name, BotToken: token, Description: desc,
+			TenantID: tenant.ID, Name: name, Platform: platform, BotToken: token, Description: desc,
 		}
 		if err := deps.Bots.Insert(r.Context(), bot); err != nil {
 			uiBotListWithFlash(w, r, deps, tenant, "error", err.Error())
 			return
 		}
-		http.Redirect(w, r, "/ui/bots", http.StatusSeeOther)
+		startBotListener(deps, bot)
+		uiBotListWithFlash(w, r, deps, tenant, "ok",
+			"Bot 已创建。请到 Telegram 给该 bot 发送 /start，或将 bot 拉入群组，"+
+				"bot 会自动回复对话的 Chat ID。把 Chat ID 填入新建 Channel 的表单。")
 	}
 }
 
@@ -84,6 +95,7 @@ func uiBotDelete(deps Deps) http.HandlerFunc {
 		}
 		tenant := wmw.Tenant(r.Context())
 		_ = deps.Bots.Delete(r.Context(), tenant.ID, id)
+		stopBotListener(deps, id)
 		http.Redirect(w, r, "/ui/bots", http.StatusSeeOther)
 	}
 }
