@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/wendi/pulseguard/internal/config"
 )
 
 // TestServerHealthz boots NewServer with a minimal Deps bundle and
@@ -98,5 +100,61 @@ func TestCSRFTokensRoundTrip(t *testing.T) {
 	rg := httptest.NewRequest(http.MethodGet, "/x", nil)
 	if !VerifyCSRF(rg) {
 		t.Fatal("VerifyCSRF should allow GET")
+	}
+}
+
+// TestSecureHeadersOnEveryResponse asserts the defensive header set
+// installed by R6 / S-M1 fires on every response (probed via /healthz)
+// and that HSTS toggles with the cookie_secure flag.
+func TestSecureHeadersOnEveryResponse(t *testing.T) {
+	cases := []struct {
+		name       string
+		secure     bool
+		wantHSTS   bool
+	}{
+		{name: "http_no_hsts", secure: false, wantHSTS: false},
+		{name: "https_with_hsts", secure: true, wantHSTS: true},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Security.CookieSecure = c.secure
+			h := NewServer(Deps{Cfg: cfg})
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+
+			resp, err := http.Get(srv.URL + "/healthz")
+			if err != nil {
+				t.Fatalf("get /healthz: %v", err)
+			}
+			defer resp.Body.Close()
+
+			want := map[string]string{
+				"X-Frame-Options":        "DENY",
+				"X-Content-Type-Options": "nosniff",
+				"Referrer-Policy":        "strict-origin-when-cross-origin",
+			}
+			for k, v := range want {
+				if got := resp.Header.Get(k); got != v {
+					t.Fatalf("header %s = %q, want %q", k, got, v)
+				}
+			}
+			csp := resp.Header.Get("Content-Security-Policy")
+			if !strings.Contains(csp, "default-src 'self'") {
+				t.Fatalf("CSP missing default-src 'self': %q", csp)
+			}
+			if !strings.Contains(csp, "frame-ancestors 'none'") {
+				t.Fatalf("CSP missing frame-ancestors: %q", csp)
+			}
+			hsts := resp.Header.Get("Strict-Transport-Security")
+			if c.wantHSTS {
+				if hsts == "" {
+					t.Fatalf("HSTS header missing under cookie_secure=true")
+				}
+			} else if hsts != "" {
+				t.Fatalf("HSTS unexpectedly set when cookie_secure=false: %q", hsts)
+			}
+		})
 	}
 }

@@ -24,6 +24,11 @@ func NewServer(deps Deps) http.Handler {
 	r.Use(chimid.RequestID)
 	r.Use(middleware.Recover(deps.Logger))
 	r.Use(middleware.Logger(deps.Logger))
+	// Defensive response headers (XFO/CSP/Referrer-Policy/etc.) on
+	// every response — defense in depth against clickjacking, MIME
+	// sniffing, and Referer leakage. HSTS is added when cookie_secure
+	// is on (production HTTPS).
+	r.Use(middleware.SecureHeaders(deps.cookieSecure()))
 
 	// Plain health check — kept outside every other middleware so probes
 	// stay cheap even when middleware misbehaves.
