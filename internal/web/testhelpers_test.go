@@ -69,6 +69,8 @@ func newTestHarness(t *testing.T) *testHarness {
 	dlq := store.NewDeadLetterRepo(db, clock)
 	dedupRepo := store.NewDedupRepo(db)
 	rl := store.NewRateLimitRepo(db, clock)
+	commands := store.NewCommandRepo(db, clock)
+	subscribers := store.NewSubscriberRepo(db, clock)
 
 	cfg := &config.Config{}
 	cfg.Security.SessionTTL = config.Duration(14 * 24 * time.Hour)
@@ -82,22 +84,24 @@ func newTestHarness(t *testing.T) *testHarness {
 	logger := slog.New(slog.NewTextHandler(testLogWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	deps := Deps{
-		Cfg:       cfg,
-		Logger:    logger,
-		Tenants:   tenants,
-		Invites:   invites,
-		Sessions:  sessions,
-		Bots:      bots,
-		Templates: templates,
-		Channels:  channels,
-		Outbox:    outbox,
-		Logs:      logs,
-		DLQ:       dlq,
-		RL:        rl,
-		Cipher:    cipher,
-		Auth:      authSvc,
-		Ingest:    ingest,
-		Clock:     clock,
+		Cfg:         cfg,
+		Logger:      logger,
+		Tenants:     tenants,
+		Invites:     invites,
+		Sessions:    sessions,
+		Bots:        bots,
+		Templates:   templates,
+		Channels:    channels,
+		Outbox:      outbox,
+		Logs:        logs,
+		DLQ:         dlq,
+		RL:          rl,
+		Commands:    commands,
+		Subscribers: subscribers,
+		Cipher:      cipher,
+		Auth:        authSvc,
+		Ingest:      ingest,
+		Clock:       clock,
 	}
 	srv := httptest.NewServer(NewServer(deps))
 

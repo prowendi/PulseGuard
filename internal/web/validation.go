@@ -11,6 +11,18 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// MaxCommandCodeBytes caps the Starlark source size accepted by the
+// commands API/UI. The Starlark compiler is single-threaded per script
+// and runs inside the request lifetime, so unbounded source lets a
+// tenant pin a worker / inflate SQLite. 64 KiB covers any sane custom
+// command (the bundled demos in command_ui.go are <200 bytes each) and
+// still leaves headroom for embedded constants. The MaxBytesReader on
+// the request body remains the outer guard (1 MiB) so this only kicks
+// in when the JSON body is dominated by the code field.
+//
+// Refs: round2-security-report S2-M1.
+const MaxCommandCodeBytes = 64 * 1024
+
 // botTokenPattern is the canonical Telegram bot token format:
 // `<bot_id>:<token>` where the second part is base64url-ish.
 var botTokenPattern = regexp.MustCompile(`^\d+:[A-Za-z0-9_-]+$`)
@@ -58,6 +70,20 @@ func validateName(w http.ResponseWriter, r *http.Request, name string, max int) 
 	}
 	if len(name) > max {
 		writeError(w, r, http.StatusBadRequest, "VALIDATION", "name too long")
+		return false
+	}
+	return true
+}
+
+// validateCommandCode enforces the MaxCommandCodeBytes ceiling on the
+// raw Starlark source. The caller has already trimmed empty input via
+// strings.TrimSpace; this only guards the upper bound so we never
+// hand a multi-MiB blob to the Starlark compiler. Returns ok=false
+// after writing a VALIDATION 400 — the handler should `return`.
+func validateCommandCode(w http.ResponseWriter, r *http.Request, code string) bool {
+	if len(code) > MaxCommandCodeBytes {
+		writeError(w, r, http.StatusBadRequest, "VALIDATION",
+			"code too large (max "+strconv.Itoa(MaxCommandCodeBytes)+" bytes)")
 		return false
 	}
 	return true

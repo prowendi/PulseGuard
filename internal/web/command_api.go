@@ -100,6 +100,9 @@ func apiCommandCreate(deps Deps) http.HandlerFunc {
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "code is required")
 			return
 		}
+		if !validateCommandCode(w, r, p.Code) {
+			return
+		}
 		enabled := true
 		if p.Enabled != nil {
 			enabled = *p.Enabled
@@ -165,6 +168,9 @@ func apiCommandUpdate(deps Deps) http.HandlerFunc {
 		if p.Code != nil {
 			if strings.TrimSpace(*p.Code) == "" {
 				writeError(w, r, http.StatusBadRequest, "VALIDATION", "code is required")
+				return
+			}
+			if !validateCommandCode(w, r, *p.Code) {
 				return
 			}
 			c.Code = *p.Code

@@ -87,6 +87,13 @@ func uiCommandCreate(deps Deps) http.HandlerFunc {
 			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: "name 与 code 不能为空"})
 			return
 		}
+		if len(code) > MaxCommandCodeBytes {
+			renderCommandsPage(w, r, deps, tenant, &flash{
+				Level:   "error",
+				Message: "code 超出 64KB 上限",
+			})
+			return
+		}
 		c := &domain.Command{
 			TenantID:    tenant.ID,
 			Name:        name,
