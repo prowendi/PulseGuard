@@ -1,0 +1,47 @@
+{{ define "bots-page" }}{{ template "layout-open" . }}
+<div class="card">
+  <h1>Bots</h1>
+  <p class="muted">配置 Telegram Bot Token，供通道引用。bot_token 仅保留末 4 位用于核对。</p>
+  <table>
+    <thead><tr><th>ID</th><th>名称</th><th>Token</th><th>描述</th><th>操作</th></tr></thead>
+    <tbody>
+      {{ $csrf := .CSRF }}
+      {{ range .Bots }}
+      <tr>
+        <td>{{ .ID }}</td>
+        <td>{{ .Name }}</td>
+        <td><code>***{{ .BotTokenLast4 }}</code></td>
+        <td>{{ .Description }}</td>
+        <td>
+          <form method="POST" action="/ui/bots/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');">
+            <input type="hidden" name="csrf" value="{{ $csrf }}">
+            <button class="danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {{ end }}
+      {{ if not .Bots }}<tr><td colspan="5" class="muted">尚无 Bot</td></tr>{{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>新建 Bot</h2>
+  <form method="POST" action="/ui/bots">
+    <input type="hidden" name="csrf" value="{{ .CSRF }}">
+    <div class="field">
+      <label>名称</label>
+      <input type="text" name="name" required maxlength="64">
+    </div>
+    <div class="field">
+      <label>Bot Token（格式 12345:ABC...）</label>
+      <input type="text" name="bot_token" required>
+    </div>
+    <div class="field">
+      <label>描述</label>
+      <input type="text" name="description">
+    </div>
+    <button type="submit">创建</button>
+  </form>
+</div>
+{{ template "layout-close" . }}{{ end }}

@@ -1,0 +1,256 @@
+package web
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/wendi/pulseguard/internal/domain"
+)
+
+// authedAPIClient returns a cookie jar client that has been authenticated
+// as the given email/password via the JSON /api/v1/auth/login endpoint.
+// The CSRF cookie value is returned alongside so callers can echo it
+// into X-CSRF-Token for mutating requests.
+func authedAPIClient(t *testing.T, h *testHarness, email, pwd string) (*http.Client, string) {
+	t.Helper()
+	c := h.newJarClient()
+	body := mustJSON(t, map[string]any{"email": email, "password": pwd})
+	resp, err := c.Post(h.fullURL("/api/v1/auth/login"), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	resp.Body.Close()
+	csrf := jarValue(t, c, h.server.URL, "psg_csrf")
+	if csrf == "" {
+		t.Fatal("login should issue csrf cookie")
+	}
+	return c, csrf
+}
+
+func registerTenantAPI(t *testing.T, h *testHarness, email, pwd, invite string) (*http.Client, string) {
+	t.Helper()
+	c := h.newJarClient()
+	body := mustJSON(t, map[string]any{
+		"email": email, "password": pwd, "invite_code": invite,
+	})
+	resp, err := c.Post(h.fullURL("/api/v1/auth/register"), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	resp.Body.Close()
+	return c, jarValue(t, c, h.server.URL, "psg_csrf")
+}
+
+// withCSRF wraps an http.Request to attach the supplied csrf token + the
+// Content-Type header for JSON bodies.
+func withCSRF(req *http.Request, csrf string) *http.Request {
+	req.Header.Set("X-CSRF-Token", csrf)
+	if req.Body != nil && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req
+}
+
+func TestBotsAPILifecycle(t *testing.T) {
+	h := newTestHarness(t)
+	_, inv := h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	_ = inv
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	// 1. Empty list.
+	resp, err := client.Get(h.fullURL("/api/v1/bots"))
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d", resp.StatusCode)
+	}
+	var listBody map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&listBody)
+	resp.Body.Close()
+	if items, _ := listBody["items"].([]any); len(items) != 0 {
+		t.Fatalf("expected empty list, got %v", items)
+	}
+
+	// 2. Create.
+	createBody := mustJSON(t, map[string]any{
+		"name":        "my-bot",
+		"bot_token":   "12345:AAAabcXYZ_-1234",
+		"description": "main",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(createBody))
+	resp, err = client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	var created botView
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if created.ID == 0 {
+		t.Fatal("created id is zero")
+	}
+	if created.BotTokenLast4 != "1234" {
+		t.Fatalf("token last4 = %q", created.BotTokenLast4)
+	}
+
+	// 3. Get by id.
+	resp, err = client.Get(h.fullURL("/api/v1/bots/" + strInt64(created.ID)))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 4. Update.
+	updBody := mustJSON(t, map[string]any{"description": "renamed"})
+	req, _ = http.NewRequest(http.MethodPut, h.fullURL("/api/v1/bots/"+strInt64(created.ID)), bytes.NewReader(updBody))
+	resp, err = client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	var updated botView
+	_ = json.NewDecoder(resp.Body).Decode(&updated)
+	resp.Body.Close()
+	if updated.Description != "renamed" {
+		t.Fatalf("description not updated: %q", updated.Description)
+	}
+
+	// 5. Delete.
+	req, _ = http.NewRequest(http.MethodDelete, h.fullURL("/api/v1/bots/"+strInt64(created.ID)), nil)
+	resp, err = client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 6. Get after delete → 404.
+	resp, err = client.Get(h.fullURL("/api/v1/bots/" + strInt64(created.ID)))
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get after delete status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestBotsAPIBadToken(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	body := mustJSON(t, map[string]any{
+		"name":      "bad",
+		"bot_token": "not-a-token",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestBotsAPIRequiresCSRF(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, _ := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	body := mustJSON(t, map[string]any{
+		"name":      "needs-csrf",
+		"bot_token": "12345:Aaa",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req) // no X-CSRF-Token
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestBotsAPIRejectsCrossTenant(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+
+	// Seed another tenant's bot directly via repo.
+	other := &domain.Tenant{
+		Email: "other@example.com", PasswordHash: "x",
+		Role: domain.RoleUser, Status: domain.TenantActive,
+	}
+	_ = h.deps.Tenants.Insert(context.Background(), other)
+	otherBot := &domain.Bot{TenantID: other.ID, Name: "x", BotToken: "12345:Z"}
+	_ = h.deps.Bots.Insert(context.Background(), otherBot)
+
+	// Now create our own tenant via API and try to fetch other's bot.
+	// Need a second invite for the second tenant.
+	inv2 := &domain.InviteCode{Code: "INV2", CreatedBy: other.ID}
+	_ = h.deps.Invites.Insert(context.Background(), inv2)
+	client, _ := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV2")
+
+	resp, err := client.Get(h.fullURL("/api/v1/bots/" + strInt64(otherBot.ID)))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-tenant get status = %d, expected 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestUIBotsRenders(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	// Register tenant via API, then re-use the same client for UI.
+	client, _ := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	resp, err := client.Get(h.fullURL("/ui/bots"))
+	if err != nil {
+		t.Fatalf("get /ui/bots: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	bs, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	body := string(bs)
+	if !strings.Contains(body, "<h1>Bots</h1>") {
+		t.Fatalf("body missing Bots heading: %s", body[:200])
+	}
+	if !strings.Contains(body, `action="/ui/bots"`) {
+		t.Fatalf("body missing create form")
+	}
+}
+
+func strInt64(n int64) string {
+	return strconv.FormatInt(n, 10)
+}

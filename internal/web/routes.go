@@ -24,7 +24,7 @@ func mountAuthedAPI(r chi.Router, deps Deps) {
 		sec.Use(wmw.CSRFCheck())
 		sec.Get("/me", apiMe(deps))
 		sec.Post("/auth/logout", apiLogout(deps))
-		// W4..W9 will append CRUD routes here.
+		installBotsAPIRoutes(sec, deps)
 	})
 }
 
@@ -39,6 +39,6 @@ func mountAuthedUI(r chi.Router, deps Deps) {
 		sec.Use(wmw.RequireAuth(deps.Auth))
 		sec.Get("/dashboard", uiDashboard(deps))
 		sec.Post("/logout", uiLogoutPost(deps))
-		// W4..W9 will append /ui/{bots,templates,channels,...} routes here.
+		installBotsUIRoutes(sec, deps)
 	})
 }
