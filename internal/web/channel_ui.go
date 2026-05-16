@@ -44,21 +44,50 @@ func uiChannelCreate(deps Deps) http.HandlerFunc {
 		name := strings.TrimSpace(r.PostForm.Get("name"))
 		chatID := strings.TrimSpace(r.PostForm.Get("chat_id"))
 		botID, _ := strconv.ParseInt(r.PostForm.Get("bot_id"), 10, 64)
-		tplID, _ := strconv.ParseInt(r.PostForm.Get("template_id"), 10, 64)
 		rate, _ := strconv.Atoi(r.PostForm.Get("rate_per_min"))
 		dedup, _ := strconv.Atoi(r.PostForm.Get("dedup_window_s"))
-		if name == "" || botID == 0 || tplID == 0 || chatID == "" {
-			renderChannelPage(w, r, deps, tenant, &flash{Level: "error", Message: "请填写完整 name/bot/template/chat_id"})
+
+		// Multi-select templates: form sends every checked id under
+		// the same key ("template_ids"); default is a single id under
+		// "default_template_id". If only one template_id arrived
+		// (legacy single-select form fall-back), accept it too.
+		var templateIDs []int64
+		for _, v := range r.PostForm["template_ids"] {
+			if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
+				templateIDs = append(templateIDs, id)
+			}
+		}
+		// Back-compat: legacy single dropdown (B3 will remove this).
+		if len(templateIDs) == 0 {
+			if id, err := strconv.ParseInt(r.PostForm.Get("template_id"), 10, 64); err == nil && id > 0 {
+				templateIDs = append(templateIDs, id)
+			}
+		}
+		defID, _ := strconv.ParseInt(r.PostForm.Get("default_template_id"), 10, 64)
+
+		if name == "" || botID == 0 || chatID == "" || len(templateIDs) == 0 {
+			renderChannelPage(w, r, deps, tenant, &flash{Level: "error", Message: "请填写完整 name/bot/chat_id 并选择至少一个模板"})
+			return
+		}
+		// Validate ownership.
+		if _, err := deps.Bots.GetByID(r.Context(), tenant.ID, botID); err != nil {
+			renderChannelPage(w, r, deps, tenant, &flash{Level: "error", Message: "bot 不存在或不属于当前租户"})
+			return
+		}
+		bindings, err := buildUIBindings(r.Context(), deps, tenant.ID, templateIDs, defID)
+		if err != nil {
+			renderChannelPage(w, r, deps, tenant, &flash{Level: "error", Message: err.Error()})
 			return
 		}
 		ch := &domain.Channel{
 			TenantID: tenant.ID, Name: name,
-			PushToken: newPushToken(),
-			BotID:     botID, TemplateID: tplID,
+			PushToken:    newPushToken(),
+			BotID:        botID,
 			ChatID:       chatID,
 			RatePerMin:   rate,
 			DedupWindowS: dedup,
 			Enabled:      true,
+			Templates:    bindings,
 		}
 		if err := deps.Channels.Insert(r.Context(), ch); err != nil {
 			renderChannelPage(w, r, deps, tenant, &flash{Level: "error", Message: err.Error()})
@@ -101,6 +130,7 @@ func uiChannelRotate(deps Deps) http.HandlerFunc {
 			return
 		}
 		ch.PushToken = newPushToken()
+		ch.Templates = nil
 		_ = deps.Channels.Update(r.Context(), ch)
 		http.Redirect(w, r, "/ui/channels", http.StatusSeeOther)
 	}

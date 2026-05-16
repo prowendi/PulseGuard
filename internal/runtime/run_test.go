@@ -388,13 +388,14 @@ func TestRunEndToEnd(t *testing.T) {
 
 	chResp := postJSON(t, userC, base+"/api/v1/channels",
 		mustJSON(t, map[string]any{
-			"name":           "primary",
-			"bot_id":         botID,
-			"template_id":    tplID,
-			"chat_id":        "12345",
-			"rate_per_min":   60,
-			"dedup_window_s": 0,
-			"enabled":        true,
+			"name":                "primary",
+			"bot_id":              botID,
+			"template_ids":        []int64{tplID},
+			"default_template_id": tplID,
+			"chat_id":             "12345",
+			"rate_per_min":        60,
+			"dedup_window_s":      0,
+			"enabled":             true,
 		}), userCSRF)
 	if chResp.StatusCode != http.StatusCreated {
 		t.Fatalf("channel create: %d body=%s", chResp.StatusCode, readErr(chResp))

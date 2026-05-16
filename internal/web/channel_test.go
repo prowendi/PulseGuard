@@ -41,7 +41,7 @@ func TestChannelsAPILifecycle(t *testing.T) {
 
 	// Create channel.
 	body := mustJSON(t, map[string]any{
-		"name": "alerts", "bot_id": botID, "template_id": tplID,
+		"name": "alerts", "bot_id": botID, "template_ids": []int64{tplID}, "default_template_id": tplID,
 		"chat_id": "@grp", "rate_per_min": 30, "dedup_window_s": 60,
 	})
 	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/channels"), bytes.NewReader(body))
@@ -129,7 +129,7 @@ func TestChannelsAPIRejectsCrossTenantFKs(t *testing.T) {
 	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV2")
 
 	body := mustJSON(t, map[string]any{
-		"name": "x", "bot_id": otherBotID, "template_id": otherTplID, "chat_id": "@g",
+		"name": "x", "bot_id": otherBotID, "template_ids": []int64{otherTplID}, "default_template_id": otherTplID, "chat_id": "@g",
 	})
 	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/channels"), bytes.NewReader(body))
 	resp, err := client.Do(withCSRF(req, csrf))

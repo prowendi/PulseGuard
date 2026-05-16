@@ -79,11 +79,11 @@ func (f *resourceFixture) makeChannel(t *testing.T, name, token string, botID, t
 		Name:         name,
 		PushToken:    token,
 		BotID:        botID,
-		TemplateID:   tplID,
 		ChatID:       "-100123",
 		RatePerMin:   60,
 		DedupWindowS: 0,
 		Enabled:      true,
+		Templates:    []*domain.ChannelTemplate{{TemplateID: tplID, IsDefault: true}},
 	}
 	if err := f.channels.Insert(context.Background(), c); err != nil {
 		t.Fatalf("insert channel: %v", err)
@@ -433,8 +433,9 @@ func TestChannelRepo_PushTokenUnique(t *testing.T) {
 	f.makeChannel(t, "a", "shared", b.ID, tpl.ID)
 	err := f.channels.Insert(context.Background(), &domain.Channel{
 		TenantID: f.tenant.ID, Name: "b", PushToken: "shared",
-		BotID: b.ID, TemplateID: tpl.ID, ChatID: "x",
+		BotID: b.ID, ChatID: "x",
 		RatePerMin: 60, DedupWindowS: 0, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: tpl.ID, IsDefault: true}},
 	})
 	if err == nil {
 		t.Fatalf("duplicate push_token should fail")

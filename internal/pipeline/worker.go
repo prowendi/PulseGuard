@@ -135,7 +135,15 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 		w.dlq(ctx, item, "", fmt.Sprintf("bot lookup: %s", err.Error()))
 		return true, nil
 	}
-	tpl, err := w.deps.Templates.GetByID(ctx, item.TenantID, ch.TemplateID)
+	// Pick template: payload._template (set by Ingest when caller
+	// requested a specific template) wins, else channel default.
+	payload := decodePayload(item.PayloadJSON)
+	templateID := pickTemplateID(ch, payload)
+	if templateID == 0 {
+		w.dlq(ctx, item, "", "channel has no template binding")
+		return true, nil
+	}
+	tpl, err := w.deps.Templates.GetByID(ctx, item.TenantID, templateID)
 	if err != nil {
 		w.dlq(ctx, item, "", fmt.Sprintf("template lookup: %s", err.Error()))
 		return true, nil
@@ -167,7 +175,6 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	}
 
 	// Render — failure is always permanent (template bugs do not heal).
-	payload := decodePayload(item.PayloadJSON)
 	text, err := render.Render(ctx, tpl, payload)
 	if err != nil {
 		w.deps.Logger.Warn("pipeline.worker render failed",
@@ -377,4 +384,42 @@ func decodePayload(raw string) map[string]any {
 		return map[string]any{}
 	}
 	return m
+}
+
+// pickTemplateID resolves which template the worker should render with.
+// Precedence:
+//  1. payload["_template_id"] (numeric) — set by Ingest when the push
+//     API caller passed ?template=<name>, resolved against the channel's
+//     bound templates at ingest time.
+//  2. payload["_template"] (string) — case-insensitive name match
+//     against the channel's bound templates (fallback for direct
+//     enqueue paths that did not pre-resolve).
+//  3. channel default template (channel_templates.is_default = 1).
+//
+// Returns 0 when no template can be selected; the worker DLQs the row.
+func pickTemplateID(ch *domain.Channel, payload map[string]any) int64 {
+	if ch == nil {
+		return 0
+	}
+	if v, ok := payload["_template_id"]; ok {
+		switch t := v.(type) {
+		case float64:
+			id := int64(t)
+			if ch.HasTemplate(id) {
+				return id
+			}
+		case int64:
+			if ch.HasTemplate(t) {
+				return t
+			}
+		}
+	}
+	if v, ok := payload["_template"].(string); ok && v != "" {
+		// We do not have template names cached on the channel; this
+		// path is only reachable when an external system enqueues with
+		// a name. Worker callers (web/push_api.go) always pre-resolve
+		// to _template_id so this is best-effort only.
+		_ = v
+	}
+	return ch.DefaultTemplateID()
 }

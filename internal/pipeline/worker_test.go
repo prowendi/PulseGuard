@@ -146,6 +146,14 @@ func (r *fakeChannelRepo) GetByPushToken(ctx context.Context, t string) (*domain
 func (r *fakeChannelRepo) ListByTenant(ctx context.Context, tenantID int64) ([]*domain.Channel, error) {
 	return nil, nil
 }
+func (r *fakeChannelRepo) ReplaceTemplates(ctx context.Context, tenantID, channelID int64, bindings []*domain.ChannelTemplate) error {
+	c, ok := r.m[channelID]
+	if !ok || c.TenantID != tenantID {
+		return domain.ErrNotFound
+	}
+	c.Templates = bindings
+	return nil
+}
 
 type fakeBotRepo struct{ m map[int64]*domain.Bot }
 
@@ -298,7 +306,9 @@ func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerF
 	t.Helper()
 	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
 	chans := &fakeChannelRepo{m: map[int64]*domain.Channel{
-		1: {ID: 1, TenantID: 1, Name: "c", BotID: 10, TemplateID: 100, ChatID: "12345", RatePerMin: 60, Enabled: true},
+		1: {ID: 1, TenantID: 1, Name: "c", BotID: 10, ChatID: "12345", RatePerMin: 60, Enabled: true,
+			Templates: []*domain.ChannelTemplate{{ChannelID: 1, TemplateID: 100, IsDefault: true}},
+		},
 	}}
 	bots := &fakeBotRepo{m: map[int64]*domain.Bot{
 		10: {ID: 10, TenantID: 1, Name: "b", BotToken: "TOKEN"},

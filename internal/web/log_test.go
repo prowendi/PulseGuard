@@ -52,8 +52,9 @@ func TestLogsAPIListAndPaginate(t *testing.T) {
 	botID, tplID := seedBotAndTemplate(t, h, tenantID)
 	ch := &domain.Channel{
 		TenantID: tenantID, Name: "ch-logs",
-		PushToken: "tok-logs", BotID: botID, TemplateID: tplID,
+		PushToken: "tok-logs", BotID: botID,
 		ChatID: "c1", RatePerMin: 60, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: tplID, IsDefault: true}},
 	}
 	if err := h.deps.Channels.Insert(context.Background(), ch); err != nil {
 		t.Fatalf("seed channel: %v", err)
@@ -111,13 +112,15 @@ func TestLogsAPIChannelFilter(t *testing.T) {
 	// Two channels, only logs for chA exist.
 	chA := &domain.Channel{
 		TenantID: tenantID, Name: "A", PushToken: "tA",
-		BotID: botID, TemplateID: tplID,
+		BotID: botID,
 		ChatID: "c1", RatePerMin: 60, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: tplID, IsDefault: true}},
 	}
 	chB := &domain.Channel{
 		TenantID: tenantID, Name: "B", PushToken: "tB",
-		BotID: botID, TemplateID: tplID,
+		BotID: botID,
 		ChatID: "c2", RatePerMin: 60, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: tplID, IsDefault: true}},
 	}
 	_ = h.deps.Channels.Insert(context.Background(), chA)
 	_ = h.deps.Channels.Insert(context.Background(), chB)
@@ -155,8 +158,9 @@ func TestLogsAPIRejectsCrossTenant(t *testing.T) {
 	otherBot, otherTpl := seedBotAndTemplate(t, h, other.ID)
 	otherCh := &domain.Channel{
 		TenantID: other.ID, Name: "X", PushToken: "tOther",
-		BotID: otherBot, TemplateID: otherTpl,
+		BotID: otherBot,
 		ChatID: "c", RatePerMin: 60, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: otherTpl, IsDefault: true}},
 	}
 	_ = h.deps.Channels.Insert(context.Background(), otherCh)
 	seedLogs(t, h, other.ID, otherCh.ID, 4)

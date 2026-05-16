@@ -38,7 +38,8 @@ func TestDLQAPIListAndReplay(t *testing.T) {
 	botID, tplID := seedBotAndTemplate(t, h, tenantID)
 	ch := &domain.Channel{
 		TenantID: tenantID, Name: "dlq-ch", PushToken: "tDLQ",
-		BotID: botID, TemplateID: tplID, ChatID: "c", RatePerMin: 60, Enabled: true,
+		BotID: botID, ChatID: "c", RatePerMin: 60, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: tplID, IsDefault: true}},
 	}
 	if err := h.deps.Channels.Insert(context.Background(), ch); err != nil {
 		t.Fatalf("seed channel: %v", err)
@@ -106,8 +107,9 @@ func TestDLQReplayCrossTenantReturns404(t *testing.T) {
 	otherBot, otherTpl := seedBotAndTemplate(t, h, other.ID)
 	otherCh := &domain.Channel{
 		TenantID: other.ID, Name: "Y", PushToken: "tOther",
-		BotID: otherBot, TemplateID: otherTpl,
+		BotID: otherBot,
 		ChatID: "c", RatePerMin: 60, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: otherTpl, IsDefault: true}},
 	}
 	_ = h.deps.Channels.Insert(context.Background(), otherCh)
 	seedDLQ(t, h, other.ID, otherCh.ID, 1)

@@ -41,9 +41,10 @@ func seedTenantBotTemplateChannel(t *testing.T, h *testHarness, pushToken string
 	}
 	ch := &domain.Channel{
 		TenantID: tenant.ID, Name: "ch-A",
-		PushToken: pushToken, BotID: bot.ID, TemplateID: tpl.ID,
+		PushToken: pushToken, BotID: bot.ID,
 		ChatID: "chat-123", RatePerMin: 60,
 		DedupWindowS: dedupWindow, Enabled: enabled,
+		Templates:    []*domain.ChannelTemplate{{TemplateID: tpl.ID, IsDefault: true}},
 	}
 	if err := h.deps.Channels.Insert(context.Background(), ch); err != nil {
 		t.Fatalf("insert channel: %v", err)

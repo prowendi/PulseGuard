@@ -48,7 +48,10 @@ type TemplateRepo interface {
 	ListByTenant(ctx context.Context, tenantID int64) ([]*Template, error)
 }
 
-// ChannelRepo manages tenant channels keyed by push_token.
+// ChannelRepo manages tenant channels keyed by push_token plus their
+// many-to-many template bindings. Reads always hydrate Channel.Templates
+// so callers can use DefaultTemplateID() / HasTemplate() without an
+// extra round-trip.
 type ChannelRepo interface {
 	Insert(ctx context.Context, c *Channel) error
 	Update(ctx context.Context, c *Channel) error
@@ -56,6 +59,12 @@ type ChannelRepo interface {
 	GetByID(ctx context.Context, tenantID, id int64) (*Channel, error)
 	GetByPushToken(ctx context.Context, pushToken string) (*Channel, error)
 	ListByTenant(ctx context.Context, tenantID int64) ([]*Channel, error)
+	// ReplaceTemplates atomically swaps the channel's template bindings
+	// to the supplied list. Used by the UI handler when the user edits
+	// only the "bound templates" form section. tenantID enforces
+	// ownership; ErrNotFound is returned when channelID is not visible
+	// to the tenant.
+	ReplaceTemplates(ctx context.Context, tenantID, channelID int64, bindings []*ChannelTemplate) error
 }
 
 // OutboxRepo is the heart of the push pipeline. ClaimNext implements

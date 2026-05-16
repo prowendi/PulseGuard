@@ -56,6 +56,7 @@ func TestMigrate_AllTablesPresent(t *testing.T) {
 
 	want := []string{
 		"bots",
+		"channel_templates",
 		"channels",
 		"dead_letters",
 		"dedup_keys",

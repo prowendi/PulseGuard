@@ -86,8 +86,9 @@ func seedFullStack(t *testing.T, dbPath string, dedupWindow int) (*domain.Channe
 	}
 	ch := &domain.Channel{
 		TenantID: tenant.ID, Name: "ch", PushToken: "tok",
-		BotID: bot.ID, TemplateID: tpl.ID, ChatID: "12345",
+		BotID: bot.ID, ChatID: "12345",
 		RatePerMin: 60, DedupWindowS: dedupWindow, Enabled: true,
+		Templates: []*domain.ChannelTemplate{{TemplateID: tpl.ID, IsDefault: true}},
 	}
 	if err := chans.Insert(context.Background(), ch); err != nil {
 		t.Fatalf("insert channel: %v", err)
