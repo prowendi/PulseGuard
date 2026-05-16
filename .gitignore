@@ -1,0 +1,11 @@
+/pulseguard
+/pulseguard.exe
+/data/
+*.db
+*.db-shm
+*.db-wal
+/.idea/
+/.vscode/
+/dist/
+.env
+config.yaml
