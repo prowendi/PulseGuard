@@ -138,7 +138,11 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	// Pick template: payload._template (set by Ingest when caller
 	// requested a specific template) wins, else channel default.
 	payload := decodePayload(item.PayloadJSON)
-	templateID := pickTemplateID(ch, payload)
+	templateID, pickErr := pickTemplateID(ch, payload)
+	if pickErr != nil {
+		w.dlq(ctx, item, "", pickErr.Error())
+		return true, nil
+	}
 	if templateID == 0 {
 		w.dlq(ctx, item, "", "channel has no template binding")
 		return true, nil
@@ -390,29 +394,41 @@ func decodePayload(raw string) map[string]any {
 // Precedence:
 //  1. payload["_template_id"] (numeric) — set by Ingest when the push
 //     API caller passed ?template=<name>, resolved against the channel's
-//     bound templates at ingest time.
+//     bound templates at ingest time. If the requested ID is NOT bound
+//     to the channel an error is returned and the worker DLQs the row;
+//     silently falling back to the default would route the payload to
+//     a template the caller explicitly did not select.
 //  2. payload["_template"] (string) — case-insensitive name match
 //     against the channel's bound templates (fallback for direct
 //     enqueue paths that did not pre-resolve).
 //  3. channel default template (channel_templates.is_default = 1).
 //
 // Returns 0 when no template can be selected; the worker DLQs the row.
-func pickTemplateID(ch *domain.Channel, payload map[string]any) int64 {
+func pickTemplateID(ch *domain.Channel, payload map[string]any) (int64, error) {
 	if ch == nil {
-		return 0
+		return 0, nil
 	}
 	if v, ok := payload["_template_id"]; ok {
+		var requested int64
 		switch t := v.(type) {
 		case float64:
-			id := int64(t)
-			if ch.HasTemplate(id) {
-				return id
-			}
+			requested = int64(t)
 		case int64:
-			if ch.HasTemplate(t) {
-				return t
-			}
+			requested = t
+		default:
+			// Unknown numeric type — ignore and fall through to default
+			// (decodePayload via encoding/json only yields float64 for
+			// JSON numbers, but keep the int64 case for direct map
+			// construction tests).
+			return ch.DefaultTemplateID(), nil
 		}
+		if requested == 0 {
+			return ch.DefaultTemplateID(), nil
+		}
+		if !ch.HasTemplate(requested) {
+			return 0, fmt.Errorf("requested template_id %d not bound to channel %d", requested, ch.ID)
+		}
+		return requested, nil
 	}
 	if v, ok := payload["_template"].(string); ok && v != "" {
 		// We do not have template names cached on the channel; this
@@ -421,5 +437,5 @@ func pickTemplateID(ch *domain.Channel, payload map[string]any) int64 {
 		// to _template_id so this is best-effort only.
 		_ = v
 	}
-	return ch.DefaultTemplateID()
+	return ch.DefaultTemplateID(), nil
 }

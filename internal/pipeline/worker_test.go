@@ -684,6 +684,251 @@ func TestWorkerLoggerNilSafe(t *testing.T) {
 	}
 }
 
+// =====================================================================
+// Multi-template fixture & tests (R2-5)
+// =====================================================================
+//
+// Above fixtures bind exactly one default template per channel; the
+// audit's H5/Q2 finding is that pickTemplateID's "caller picked a
+// specific template_id" branch is uncovered. Helpers below build a
+// channel with two bindings (one default, one non-default) so we can
+// exercise the three pickTemplateID outcomes:
+//   1. payload selects the non-default binding → render with it
+//   2. payload omits _template_id → render with the default binding
+//   3. payload selects a template_id NOT bound to the channel → DLQ
+
+// newMultiTemplateFixture is identical to newWorkerFixture but with
+// two templates bound to channel 1: template 100 default ("Hello…"),
+// template 200 non-default ("Bye…"). The sender records the rendered
+// text so each test can assert which body was sent.
+func newMultiTemplateFixture(t *testing.T, sender domain.Sender) *workerFixture {
+	t.Helper()
+	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
+	chans := &fakeChannelRepo{m: map[int64]*domain.Channel{
+		1: {ID: 1, TenantID: 1, Name: "c", BotID: 10, ChatID: "12345", RatePerMin: 60, Enabled: true,
+			Templates: []*domain.ChannelTemplate{
+				{ChannelID: 1, TemplateID: 100, IsDefault: true, SortOrder: 0},
+				{ChannelID: 1, TemplateID: 200, IsDefault: false, SortOrder: 1},
+			},
+		},
+	}}
+	bots := &fakeBotRepo{m: map[int64]*domain.Bot{
+		10: {ID: 10, TenantID: 1, Name: "b", BotToken: "TOKEN"},
+	}}
+	tpls := &fakeTplRepo{m: map[int64]*domain.Template{
+		100: {ID: 100, TenantID: 1, Name: "default", ParseMode: domain.ParseMarkdownV2, Body: "Hello {{ .name }}"},
+		200: {ID: 200, TenantID: 1, Name: "second", ParseMode: domain.ParseMarkdownV2, Body: "Bye {{ .name }}"},
+	}}
+	logBuf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	deps := WorkerDeps{
+		Outbox:    newFakeOutbox(),
+		Channels:  chans,
+		Bots:      bots,
+		Templates: tpls,
+		Logs:      &fakeLogRepo{},
+		DLQ:       &fakeDLQ{},
+		RL:        &fakeRL{allow: true},
+		Sender:    sender,
+		Clock:     clk,
+		Logger:    logger,
+	}
+	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
+	w := New(deps, cfg)
+	return &workerFixture{
+		outbox: deps.Outbox.(*fakeOutbox),
+		logs:   deps.Logs.(*fakeLogRepo),
+		dlq:    deps.DLQ.(*fakeDLQ),
+		chans:  chans,
+		bots:   bots,
+		tpls:   tpls,
+		rl:     deps.RL.(*fakeRL),
+		clk:    clk,
+		w:      w,
+		logBuf: logBuf,
+	}
+}
+
+// recordingSender captures the rendered text on each Send so multi-
+// template tests can assert which template body was selected.
+type recordingSender struct {
+	mu    sync.Mutex
+	texts []string
+}
+
+func (s *recordingSender) Send(_ context.Context, _, _, _, text string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.texts = append(s.texts, text)
+	return int64(len(s.texts)), nil
+}
+
+func (s *recordingSender) lastText() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.texts) == 0 {
+		return ""
+	}
+	return s.texts[len(s.texts)-1]
+}
+
+// TestWorkerPicksTemplateByIDFromPayload covers pickTemplateID
+// precedence rule #1: payload["_template_id"] points to a non-default
+// binding; the worker must honour it and render that template.
+func TestWorkerPicksTemplateByIDFromPayload(t *testing.T) {
+	sender := &recordingSender{}
+	f := newMultiTemplateFixture(t, sender)
+	// payload selects template 200 (non-default Bye…).
+	now := f.clk.Now()
+	item := &domain.PushOutbox{
+		ChannelID:     1,
+		TenantID:      1,
+		PayloadJSON:   `{"name":"world","_template_id":200}`,
+		Status:        domain.OutboxPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	id, err := f.outbox.Insert(context.Background(), item)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	item.ID = id
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q, want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "Bye ") {
+		t.Fatalf("sender saw %q, want Bye-prefixed (template 200)", text)
+	}
+	if len(f.dlq.dl) != 0 {
+		t.Fatalf("dlq should be empty, got %d", len(f.dlq.dl))
+	}
+}
+
+// TestWorkerFallsBackToDefaultWhenNoTemplateID covers precedence rule
+// #3: payload omits _template_id even though the channel has more than
+// one binding; the default (IsDefault=true) template must win.
+func TestWorkerFallsBackToDefaultWhenNoTemplateID(t *testing.T) {
+	sender := &recordingSender{}
+	f := newMultiTemplateFixture(t, sender)
+	now := f.clk.Now()
+	item := &domain.PushOutbox{
+		ChannelID:     1,
+		TenantID:      1,
+		PayloadJSON:   `{"name":"world"}`, // no _template_id
+		Status:        domain.OutboxPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	id, err := f.outbox.Insert(context.Background(), item)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	item.ID = id
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q, want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "Hello ") {
+		t.Fatalf("sender saw %q, want Hello-prefixed (default template 100)", text)
+	}
+}
+
+// TestWorkerDLQsWhenTemplateIDNotBound proves the audit's strict
+// behaviour: a caller specifying _template_id that is NOT bound to
+// the channel must NOT silently fall back to the default — the row is
+// DLQ'd so the operator notices the mismatch. Without this guarantee
+// a caller could ask for template X and silently receive Y, which is
+// a multi-tenant correctness hazard.
+func TestWorkerDLQsWhenTemplateIDNotBound(t *testing.T) {
+	sender := &recordingSender{}
+	f := newMultiTemplateFixture(t, sender)
+	// Template 999 exists nowhere in the tpls map nor in the
+	// channel's bindings — the worker must reject it.
+	now := f.clk.Now()
+	item := &domain.PushOutbox{
+		ChannelID:     1,
+		TenantID:      1,
+		PayloadJSON:   `{"name":"world","_template_id":999}`,
+		Status:        domain.OutboxPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	id, err := f.outbox.Insert(context.Background(), item)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	item.ID = id
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxDead {
+		t.Fatalf("status = %q, want dead", got.Status)
+	}
+	if len(sender.texts) != 0 {
+		t.Fatalf("sender must not run when template_id is unbound (got %d sends)", len(sender.texts))
+	}
+	if len(f.dlq.dl) != 1 {
+		t.Fatalf("dlq len = %d, want 1", len(f.dlq.dl))
+	}
+	if !strings.Contains(f.dlq.dl[0].LastError, "999") {
+		t.Fatalf("dlq err = %q, want mention of requested template_id 999", f.dlq.dl[0].LastError)
+	}
+}
+
+// TestWorkerDLQsWhenNoDefaultTemplate covers the H6 audit gap:
+// channel exists, has zero IsDefault bindings (i.e. all bindings have
+// IsDefault=false — a state that should be prevented by the unique
+// partial index but can happen if migrations race). Worker must DLQ
+// rather than panic or send nothing.
+func TestWorkerDLQsWhenNoDefaultTemplate(t *testing.T) {
+	sender := &recordingSender{}
+	f := newMultiTemplateFixture(t, sender)
+	// Demote both bindings so IsDefault is false everywhere.
+	f.chans.m[1].Templates[0].IsDefault = false
+	now := f.clk.Now()
+	item := &domain.PushOutbox{
+		ChannelID:     1,
+		TenantID:      1,
+		PayloadJSON:   `{"name":"world"}`, // no _template_id → default lookup
+		Status:        domain.OutboxPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	id, err := f.outbox.Insert(context.Background(), item)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	item.ID = id
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxDead {
+		t.Fatalf("status = %q, want dead", got.Status)
+	}
+	if len(sender.texts) != 0 {
+		t.Fatalf("sender must not run with no default binding (got %d sends)", len(sender.texts))
+	}
+	if len(f.dlq.dl) != 1 {
+		t.Fatalf("dlq len = %d, want 1", len(f.dlq.dl))
+	}
+	if !strings.Contains(f.dlq.dl[0].LastError, "template binding") {
+		t.Fatalf("dlq err = %q, want mention of missing template binding", f.dlq.dl[0].LastError)
+	}
+}
+
 func itoa(v int64) string {
 	// Avoid importing strconv just for the test helper; the worker test
 	// file already pulls in fmt indirectly via testing assertions, but we
