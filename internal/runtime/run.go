@@ -221,7 +221,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	// inbound `/<name>` messages route to per-tenant scripts.
 	scriptHTTP := scripting.NewHTTPClient()
 	scriptExec := &scripting.Executor{HTTP: scriptHTTP}
-	dispatcher := cmdrun.New(commands, scriptExec, subscribers)
+	dispatcher := cmdrun.New(commands, scriptExec, subscribers, logger)
 
 	listenerFactories := ov.BotListenerFactories
 	if len(listenerFactories) == 0 {
