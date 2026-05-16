@@ -11,9 +11,9 @@ func mountAuthAPI(r chi.Router, deps Deps) {
 	installAuthAPIRoutes(r, deps)
 }
 
-// mountPushAPI installs the public push endpoint. Populated in W3.
+// mountPushAPI installs the public push endpoint.
 func mountPushAPI(r chi.Router, deps Deps) {
-	_ = deps
+	installPushAPIRoutes(r, deps)
 }
 
 // mountAuthedAPI installs every session-gated /api/v1/* endpoint.
