@@ -1,0 +1,51 @@
+{{ define "templates-page" }}{{ template "layout-open" . }}
+<div class="card">
+  <h1>消息模板</h1>
+  <p class="muted">Telegram 消息模板，支持 Go text/template 语法。{{ "{{ .field }}" }} 引用 payload 字段。</p>
+  <table>
+    <thead><tr><th>ID</th><th>名称</th><th>parse_mode</th><th>body</th><th>操作</th></tr></thead>
+    <tbody>
+      {{ $csrf := .CSRF }}
+      {{ range .Templates }}
+      <tr>
+        <td>{{ .ID }}</td>
+        <td>{{ .Name }}</td>
+        <td><span class="badge ok">{{ .ParseMode }}</span></td>
+        <td><pre style="max-width:480px;white-space:pre-wrap">{{ .Body }}</pre></td>
+        <td>
+          <form method="POST" action="/ui/templates/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');">
+            <input type="hidden" name="csrf" value="{{ $csrf }}">
+            <button class="danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {{ end }}
+      {{ if not .Templates }}<tr><td colspan="5" class="muted">尚无模板</td></tr>{{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>新建模板</h2>
+  <form method="POST" action="/ui/templates">
+    <input type="hidden" name="csrf" value="{{ .CSRF }}">
+    <div class="field">
+      <label>名称</label>
+      <input type="text" name="name" required maxlength="64">
+    </div>
+    <div class="field">
+      <label>parse_mode</label>
+      <select name="parse_mode">
+        <option value="MarkdownV2">MarkdownV2</option>
+        <option value="HTML">HTML</option>
+        <option value="None">None</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>body</label>
+      <textarea name="body" required placeholder="🚨 {{ "{{ .title | escMD }}" }}"></textarea>
+    </div>
+    <button type="submit">创建</button>
+  </form>
+</div>
+{{ template "layout-close" . }}{{ end }}
