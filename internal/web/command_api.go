@@ -238,7 +238,14 @@ func apiCommandTest(deps Deps) http.HandlerFunc {
 			case errors.Is(runErr, scripting.ErrMissingHandle):
 				out.Error = "脚本必须定义 handle(args) 函数"
 			default:
-				out.Error = runErr.Error()
+				// Never leak Starlark stack traces / file paths to API
+				// consumers. Server-side log keeps the raw error for
+				// operators; clients see an opaque message + request_id.
+				deps.Logger.Warn("command test execution failed",
+					"command_id", c.ID,
+					"tenant_id", tenant.ID,
+					"err", runErr.Error())
+				out.Error = "命令执行失败"
 			}
 		}
 		writeJSON(w, http.StatusOK, out)
