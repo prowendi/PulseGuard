@@ -99,6 +99,12 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	// ── 2. Cipher (AES-GCM, master_key_b64 from config).
 	cipher, err := store.NewCipher(cfg.Security.MasterKeyB64)
 	if err != nil {
+		// Surface the weak-key error with a precise operator message
+		// before the wrapped error bubbles up to main and exits non-zero.
+		if errors.Is(err, store.ErrWeakMasterKey) {
+			logger.Error("runtime: refusing to start with example master_key",
+				"hint", "run `openssl rand -base64 32` and set PULSEGUARD_SECURITY_MASTER_KEY_B64")
+		}
 		return fmt.Errorf("runtime: cipher: %w", err)
 	}
 

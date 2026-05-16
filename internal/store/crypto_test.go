@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"testing"
 )
 
@@ -110,5 +111,21 @@ func TestCipher_RejectsTooShort(t *testing.T) {
 	}
 	if _, err := c.Decrypt([]byte("short")); err == nil {
 		t.Fatalf("expected error for truncated blob")
+	}
+}
+
+// TestCipher_RejectsExampleWeakKey is the regression guard for
+// security-report S-M5: the documented example value (32 ASCII 'a')
+// must NEVER be accepted at boot. NewCipher returns the ErrWeakMasterKey
+// sentinel so runtime can surface a precise operator message.
+func TestCipher_RejectsExampleWeakKey(t *testing.T) {
+	weak := bytes.Repeat([]byte{0x61}, 32) // matches config.example.yaml
+	enc := base64.StdEncoding.EncodeToString(weak)
+	_, err := NewCipher(enc)
+	if err == nil {
+		t.Fatal("expected error for example weak master_key")
+	}
+	if !errors.Is(err, ErrWeakMasterKey) {
+		t.Fatalf("expected ErrWeakMasterKey, got %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -17,6 +18,17 @@ type Cipher struct {
 	aead cipher.AEAD
 }
 
+// exampleWeakKey is the 32-byte sequence config.example.yaml ships as
+// a placeholder — 32 ASCII 'a' characters (0x61). Anyone forgetting to
+// regenerate it would end up encrypting every tenant bot_token under a
+// fully-public key, so we refuse to boot in that state.
+var exampleWeakKey = bytes.Repeat([]byte{0x61}, 32)
+
+// ErrWeakMasterKey is returned by NewCipher when masterKeyB64 decodes
+// to the documented example value. Distinct sentinel so runtime can
+// surface a specific operator-facing message.
+var ErrWeakMasterKey = errors.New("master_key_b64 is the documented example value; generate a real 32-byte base64 key")
+
 // NewCipher decodes masterKeyB64 (must be base64 of exactly 32 bytes)
 // and returns a ready-to-use AES-GCM cipher.
 func NewCipher(masterKeyB64 string) (*Cipher, error) {
@@ -29,6 +41,9 @@ func NewCipher(masterKeyB64 string) (*Cipher, error) {
 	}
 	if len(key) != 32 {
 		return nil, fmt.Errorf("master_key_b64 must decode to 32 bytes, got %d", len(key))
+	}
+	if bytes.Equal(key, exampleWeakKey) {
+		return nil, ErrWeakMasterKey
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
