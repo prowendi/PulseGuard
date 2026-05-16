@@ -10,6 +10,14 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// MaxPushBodyBytes caps the request body of POST /api/v1/push/{token}
+// at 1 MiB. Above this the server returns 413 to prevent malicious
+// clients from inflating SQLite (payload is stored as TEXT) or
+// occupying connection memory while a JSON decoder drains them.
+//
+// Refs: security-report S-M4, code-review-report C-I5.
+const MaxPushBodyBytes = 1 << 20
+
 // installPushAPIRoutes wires POST /api/v1/push/{token}. The endpoint is
 // intentionally OUTSIDE the auth/csrf middleware stack because its only
 // bearer is the channel push_token in the URL path (spec §4.1).
@@ -40,10 +48,19 @@ func apiPush(deps Deps) http.HandlerFunc {
 
 		// Decode payload. We allow any JSON object — fields are passed
 		// verbatim to the template engine. Reject non-object roots.
+		// MaxBytesReader hard-stops the decoder at 1 MiB and surfaces
+		// http.MaxBytesError so we can return 413 instead of OOM-ing.
 		var payload map[string]any
+		r.Body = http.MaxBytesReader(w, r.Body, MaxPushBodyBytes)
 		dec := json.NewDecoder(r.Body)
 		dec.UseNumber()
 		if err := dec.Decode(&payload); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				writeError(w, r, http.StatusRequestEntityTooLarge, "VALIDATION",
+					"push body exceeds 1 MiB limit")
+				return
+			}
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "body must be a JSON object: "+err.Error())
 			return
 		}

@@ -157,8 +157,7 @@ func TestPushDedupDropsSecondHit(t *testing.T) {
 // style messages) nor any low-level identifier (path of the SQLite db,
 // SQL fragment, internal Go file paths). The full error must reach the
 // structured logger so on-call can still triage by request_id.
-func TestWriteInternalDoesNotLeakErrorDetail(t *testing.T) {
-	rec := httptest.NewRecorder()
+func TestWriteInternalDoesNotLeakErrorDetail(t *testing.T) {	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/push/some-token", nil)
 	req.Header.Set("X-Request-Id", "rid-test-1234")
 
@@ -197,5 +196,45 @@ func TestWriteInternalDoesNotLeakErrorDetail(t *testing.T) {
 	logs := logBuf.String()
 	if !strings.Contains(logs, secret) {
 		t.Fatalf("logger did not record full error; got: %s", logs)
+	}
+}
+
+// TestPushBodyTooLargeReturns413 is the regression guard for
+// security-report S-M4 / code-review-report C-I5. A 2 MiB JSON body
+// must be rejected with 413 before any decoding allocates an unbounded
+// map.
+func TestPushBodyTooLargeReturns413(t *testing.T) {
+	h := newTestHarness(t)
+	seedTenantBotTemplateChannel(t, h, "tok-big", 0, true)
+
+	// Build a 2 MiB body with a long string value so the JSON is valid
+	// if it ever managed to reach the decoder — we want to prove the
+	// guard rejects on size, not on parse error.
+	const size = 2 << 20
+	buf := bytes.NewBuffer(make([]byte, 0, size+64))
+	buf.WriteString(`{"title":"`)
+	for i := 0; i < size; i++ {
+		buf.WriteByte('A')
+	}
+	buf.WriteString(`"}`)
+
+	resp, err := http.Post(h.fullURL("/api/v1/push/tok-big"),
+		"application/json", buf)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", resp.StatusCode, drain(resp))
+	}
+	var env apiError
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.Error.Code != "VALIDATION" {
+		t.Fatalf("code = %q, want VALIDATION", env.Error.Code)
+	}
+	if !strings.Contains(env.Error.Message, "1 MiB") {
+		t.Fatalf("message %q does not mention size cap", env.Error.Message)
 	}
 }

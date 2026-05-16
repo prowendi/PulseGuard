@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 )
 
@@ -60,16 +61,33 @@ func writeInternal(w http.ResponseWriter, r *http.Request, deps Deps, label stri
 
 // decodeJSON parses an HTTP body into dst. Returns true on success,
 // false after writing a 400 VALIDATION error response.
+//
+// The reader is wrapped in http.MaxBytesReader(MaxRequestBodyBytes)
+// before decode so a malicious client cannot OOM the process by
+// streaming an unbounded JSON body.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if r.Body == nil {
 		writeError(w, r, http.StatusBadRequest, "VALIDATION", "empty body")
 		return false
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, r, http.StatusRequestEntityTooLarge, "VALIDATION",
+				"request body exceeds 1 MiB limit")
+			return false
+		}
 		writeError(w, r, http.StatusBadRequest, "VALIDATION", err.Error())
 		return false
 	}
 	return true
 }
+
+// MaxRequestBodyBytes is the default cap shared by every JSON-decoding
+// authenticated endpoint (template preview, channel CRUD, bot CRUD,
+// etc.). The push endpoint has its own cap (MaxPushBodyBytes) declared
+// locally because it accepts arbitrary tenant-defined payloads.
+const MaxRequestBodyBytes = 1 << 20
