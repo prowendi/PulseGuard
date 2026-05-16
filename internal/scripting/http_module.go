@@ -35,14 +35,33 @@ type HTTPClient struct {
 }
 
 // NewHTTPClient fills in safe defaults: 5 s timeout, 1 MiB body cap,
-// http+https schemes only, SSRF guard ON.
+// http+https schemes only, SSRF guard ON, and redirects disabled.
+//
+// Disabling redirect follow-through is part of the SSRF guarantee:
+// CheckURL is applied only to the URL the script supplied, so the
+// transport must not silently chase 3xx responses to attacker-chosen
+// hosts (e.g. an external server returning `Location: http://10.0.0.1`).
+// 3xx responses are returned verbatim to the script — the script can
+// inspect status / headers and decide whether to re-issue the request
+// (which then goes through CheckURL again).
 func NewHTTPClient() *HTTPClient {
 	return &HTTPClient{
-		BaseClient:      &http.Client{Timeout: 5 * time.Second},
+		BaseClient: &http.Client{
+			Timeout:       5 * time.Second,
+			CheckRedirect: blockRedirect,
+		},
 		MaxBodyBytes:    1 << 20,
 		AllowedScheme:   []string{"http", "https"},
 		DenyPrivateNets: true,
 	}
+}
+
+// blockRedirect tells net/http to treat the most recent 3xx response as
+// the final response (no follow). Returning ErrUseLastResponse is the
+// stdlib-documented way to disable redirect chasing without faking an
+// error in user code (see net/http.Client.CheckRedirect doc).
+func blockRedirect(req *http.Request, via []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // Module returns the Starlark "http" module value. Pass the same

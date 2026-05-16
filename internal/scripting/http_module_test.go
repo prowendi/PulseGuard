@@ -7,13 +7,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func newTestHTTPClient(allowPrivate bool) *HTTPClient {
 	return &HTTPClient{
-		BaseClient:      &http.Client{Timeout: 3 * time.Second},
+		BaseClient: &http.Client{
+			Timeout:       3 * time.Second,
+			CheckRedirect: blockRedirect,
+		},
 		MaxBodyBytes:    1 << 16,
 		AllowedScheme:   []string{"http", "https"},
 		DenyPrivateNets: !allowPrivate,
@@ -216,5 +220,91 @@ def handle(args):
 	}
 	if res.Return != "4096" {
 		t.Fatalf("body length = %s, want 4096", res.Return)
+	}
+}
+
+// ─── SSRF — redirect follow disabled ──────────────────────────────────
+//
+// http.Client default follows up to 10 redirects. Without a
+// CheckRedirect policy, an attacker-controlled server can return
+// `301 Location: http://10.0.0.1/` and the transport silently chases
+// it — bypassing CheckURL which only saw the original (public) URL.
+//
+// PulseGuard's HTTPClient hard-disables redirect follow so 3xx
+// responses are returned verbatim to the script. The script must
+// re-issue any redirect target through http.get, which routes through
+// CheckURL again.
+
+// TestHTTP_RedirectToPrivateIPNotFollowed proves the SSRF bypass
+// vector is closed: an external server returns 301 to a private IP;
+// the client surfaces the 301 response (status + Location header) and
+// does NOT touch the private host. We assert by checking the rendered
+// status string is exactly "301" and the response Location header
+// matches what the attacker sent.
+func TestHTTP_RedirectToPrivateIPNotFollowed(t *testing.T) {
+	var hitCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hitCount, 1)
+		w.Header().Set("Location", "http://127.0.0.1:1/should-not-be-fetched")
+		w.WriteHeader(http.StatusMovedPermanently)
+	}))
+	defer srv.Close()
+
+	// allowPrivate=true is required so the httptest.Server (bound to
+	// 127.0.0.1) itself is reachable; the redirect target lands on a
+	// closed port — if redirect WERE followed the script would observe
+	// a connection-refused error, not a 301 status.
+	c := newTestHTTPClient(true)
+	e := &Executor{HTTP: c}
+	res, err := e.Execute(context.Background(), `
+def handle(args):
+    r = http.get(args[0])
+    return str(r["status"]) + "|" + r["headers"].get("Location", "")
+`, []string{srv.URL})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.HasPrefix(res.Return, "301|") {
+		t.Fatalf("status not 301; got %q", res.Return)
+	}
+	if !strings.Contains(res.Return, "http://127.0.0.1:1/should-not-be-fetched") {
+		t.Fatalf("Location header missing from response: %q", res.Return)
+	}
+	if got := atomic.LoadInt32(&hitCount); got != 1 {
+		t.Fatalf("redirect appears to have been followed: server hit %d times, want 1", got)
+	}
+}
+
+// TestHTTP_RedirectToPublicHostNotFollowed proves the policy is
+// global: even when the redirect target is itself a benign public
+// hostname we still surface the 3xx so the script (and operators
+// reviewing audit logs) can see the indirection.
+func TestHTTP_RedirectToPublicHostNotFollowed(t *testing.T) {
+	var hitCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hitCount, 1)
+		w.Header().Set("Location", "http://example.com/safe")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := newTestHTTPClient(true)
+	e := &Executor{HTTP: c}
+	res, err := e.Execute(context.Background(), `
+def handle(args):
+    r = http.get(args[0])
+    return str(r["status"]) + "|" + r["headers"].get("Location", "")
+`, []string{srv.URL})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.HasPrefix(res.Return, "302|") {
+		t.Fatalf("status not 302; got %q", res.Return)
+	}
+	if !strings.Contains(res.Return, "http://example.com/safe") {
+		t.Fatalf("Location header missing from response: %q", res.Return)
+	}
+	if got := atomic.LoadInt32(&hitCount); got != 1 {
+		t.Fatalf("redirect appears to have been followed: server hit %d times, want 1", got)
 	}
 }
