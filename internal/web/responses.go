@@ -32,11 +32,30 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // envelope. The request id is harvested from the chi RequestID middleware
 // (header X-Request-Id), allowing clients to correlate with logs.
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
-	rid := r.Header.Get("X-Request-Id")
+	// chi.RequestID sets the X-Request-Id header on the response writer;
+	// some clients echo it back in their request, so check both. Prefer
+	// the response header since chi sets it first.
+	rid := w.Header().Get("X-Request-Id")
 	if rid == "" {
-		rid = w.Header().Get("X-Request-Id")
+		rid = r.Header.Get("X-Request-Id")
 	}
 	writeJSON(w, status, apiError{Error: apiErrorBody{Code: code, Message: msg, RequestID: rid}})
+}
+
+// writeInternal records the full error to the structured logger and
+// returns an OPAQUE 500 to the client. The client only sees a generic
+// message + the request_id so the operator can correlate the
+// privileged log line. Implements security-report S-H2.
+func writeInternal(w http.ResponseWriter, r *http.Request, deps Deps, label string, err error) {
+	if deps.Logger != nil {
+		deps.Logger.Error(label,
+			"err", err.Error(),
+			"path", r.URL.Path,
+			"method", r.Method,
+		)
+	}
+	writeError(w, r, http.StatusInternalServerError, "INTERNAL",
+		"internal error; see request_id in response header")
 }
 
 // decodeJSON parses an HTTP body into dst. Returns true on success,

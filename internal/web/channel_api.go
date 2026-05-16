@@ -77,7 +77,7 @@ func apiChannelList(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		items, err := deps.Channels.ListByTenant(r.Context(), tenant.ID)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		views := make([]channelView, 0, len(items))
@@ -125,7 +125,7 @@ func apiChannelCreate(deps Deps) http.HandlerFunc {
 			Enabled:      enabled,
 		}
 		if err := deps.Channels.Insert(r.Context(), ch); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, toChannelView(ch))
@@ -141,7 +141,7 @@ func apiChannelGet(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		c, err := deps.Channels.GetByID(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toChannelView(c))
@@ -161,7 +161,7 @@ func apiChannelUpdate(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		ch, err := deps.Channels.GetByID(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		if p.Name != nil {
@@ -217,7 +217,7 @@ func apiChannelUpdate(deps Deps) http.HandlerFunc {
 			ch.Enabled = *p.Enabled
 		}
 		if err := deps.Channels.Update(r.Context(), ch); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toChannelView(ch))
@@ -232,7 +232,7 @@ func apiChannelDelete(deps Deps) http.HandlerFunc {
 		}
 		tenant := wmw.Tenant(r.Context())
 		if err := deps.Channels.Delete(r.Context(), tenant.ID, id); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -248,12 +248,12 @@ func apiChannelRotate(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		ch, err := deps.Channels.GetByID(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		ch.PushToken = newPushToken()
 		if err := deps.Channels.Update(r.Context(), ch); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toChannelView(ch))
@@ -269,7 +269,7 @@ func checkFKOwnership(w http.ResponseWriter, r *http.Request, deps Deps, tenantI
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_id not found")
 			return false
 		}
-		writeRepoError(w, r, err)
+		writeRepoError(w, r, deps, err)
 		return false
 	}
 	if _, err := deps.Templates.GetByID(r.Context(), tenantID, templateID); err != nil {
@@ -277,7 +277,7 @@ func checkFKOwnership(w http.ResponseWriter, r *http.Request, deps Deps, tenantI
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "template_id not found")
 			return false
 		}
-		writeRepoError(w, r, err)
+		writeRepoError(w, r, deps, err)
 		return false
 	}
 	return true

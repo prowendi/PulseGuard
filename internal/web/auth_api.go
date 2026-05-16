@@ -63,7 +63,7 @@ func apiRegister(deps Deps) http.HandlerFunc {
 		}
 		tenant, sess, err := deps.Auth.Register(r.Context(), p.Email, p.Password, p.InviteCode)
 		if err != nil {
-			writeAuthError(w, r, err)
+			writeAuthError(w, r, deps, err)
 			return
 		}
 		setSessionCookie(w, sess, deps)
@@ -84,14 +84,14 @@ func apiLogin(deps Deps) http.HandlerFunc {
 		p.Email = strings.TrimSpace(strings.ToLower(p.Email))
 		sess, err := deps.Auth.Login(r.Context(), p.Email, p.Password)
 		if err != nil {
-			writeAuthError(w, r, err)
+			writeAuthError(w, r, deps, err)
 			return
 		}
 		// Tenant lookup is cheap (single row) and lets us return the
 		// caller's role/email without forcing an extra /me roundtrip.
 		tenant, _, err := deps.Auth.SessionFromID(r.Context(), sess.ID)
 		if err != nil {
-			writeError(w, r, http.StatusInternalServerError, "INTERNAL", "post-login lookup failed")
+			writeInternal(w, r, deps, "post-login lookup", err)
 			return
 		}
 		setSessionCookie(w, sess, deps)
@@ -157,7 +157,7 @@ func clearSessionCookie(w http.ResponseWriter, deps Deps) {
 	})
 }
 
-func writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
+func writeAuthError(w http.ResponseWriter, r *http.Request, deps Deps, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInviteInvalid):
 		writeError(w, r, http.StatusBadRequest, "VALIDATION", "invite code invalid")
@@ -168,6 +168,6 @@ func writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrUnauthorized):
 		writeError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid credentials")
 	default:
-		writeError(w, r, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeInternal(w, r, deps, "auth error", err)
 	}
 }

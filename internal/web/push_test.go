@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,5 +148,54 @@ func TestPushDedupDropsSecondHit(t *testing.T) {
 	}
 	if out["reason"] != "dedup" {
 		t.Fatalf("reason = %v", out["reason"])
+	}
+}
+
+// TestWriteInternalDoesNotLeakErrorDetail is the regression guard for
+// security-report S-H2: the client-facing body of a 500 must contain
+// neither the wrapped sentinel sentinel ("schema_migrations failed: ..."
+// style messages) nor any low-level identifier (path of the SQLite db,
+// SQL fragment, internal Go file paths). The full error must reach the
+// structured logger so on-call can still triage by request_id.
+func TestWriteInternalDoesNotLeakErrorDetail(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/push/some-token", nil)
+	req.Header.Set("X-Request-Id", "rid-test-1234")
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	deps := Deps{Logger: logger}
+
+	secret := "schema secret: SELECT password_hash FROM tenants /* sql leak */"
+	writeInternal(rec, req, deps, "push: ingest", errors.New(secret))
+
+	// Body must be opaque.
+	body := rec.Body.String()
+	if strings.Contains(body, secret) {
+		t.Fatalf("response body leaks internal error: %s", body)
+	}
+	if !strings.Contains(body, "internal error") {
+		t.Fatalf("response body missing generic message: %s", body)
+	}
+	// Status must be 500 with INTERNAL code.
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var env apiError
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.Error.Code != "INTERNAL" {
+		t.Fatalf("code = %q", env.Error.Code)
+	}
+	// request_id must propagate so operator can correlate.
+	if env.Error.RequestID == "" {
+		t.Fatalf("missing request_id in envelope")
+	}
+
+	// Privileged log line must include the actual error.
+	logs := logBuf.String()
+	if !strings.Contains(logs, secret) {
+		t.Fatalf("logger did not record full error; got: %s", logs)
 	}
 }

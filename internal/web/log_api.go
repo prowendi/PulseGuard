@@ -61,7 +61,7 @@ func apiLogList(deps Deps) http.HandlerFunc {
 			rows, total, err = deps.Logs.ListByTenant(r.Context(), tenant.ID, page, perPage)
 		}
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		views := make([]logView, 0, len(rows))

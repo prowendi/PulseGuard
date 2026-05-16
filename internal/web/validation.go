@@ -32,8 +32,10 @@ func parsePathID(w http.ResponseWriter, r *http.Request, key string) (int64, boo
 }
 
 // writeRepoError maps common domain errors into the JSON error envelope.
-// Use it from CRUD handlers so they don't repeat the switch.
-func writeRepoError(w http.ResponseWriter, r *http.Request, err error) {
+// Use it from CRUD handlers so they don't repeat the switch. The
+// default branch (unknown errors) is sanitised via writeInternal so we
+// never leak a raw err.Error() into a 5xx body.
+func writeRepoError(w http.ResponseWriter, r *http.Request, deps Deps, err error) {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "not found")
@@ -44,7 +46,7 @@ func writeRepoError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrForbidden):
 		writeError(w, r, http.StatusForbidden, "FORBIDDEN", "forbidden")
 	default:
-		writeError(w, r, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeInternal(w, r, deps, "repo error", err)
 	}
 }
 

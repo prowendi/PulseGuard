@@ -65,7 +65,7 @@ func apiTemplateList(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		items, err := deps.Templates.ListByTenant(r.Context(), tenant.ID)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		views := make([]templateView, 0, len(items))
@@ -106,7 +106,7 @@ func apiTemplateCreate(deps Deps) http.HandlerFunc {
 			Body:      p.Body,
 		}
 		if err := deps.Templates.Insert(r.Context(), tpl); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, toTemplateView(tpl))
@@ -122,7 +122,7 @@ func apiTemplateGet(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		t, err := deps.Templates.GetByID(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toTemplateView(t))
@@ -142,7 +142,7 @@ func apiTemplateUpdate(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		t, err := deps.Templates.GetByID(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		if p.Name != nil {
@@ -171,7 +171,7 @@ func apiTemplateUpdate(deps Deps) http.HandlerFunc {
 			t.Body = *p.Body
 		}
 		if err := deps.Templates.Update(r.Context(), t); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toTemplateView(t))
@@ -186,7 +186,7 @@ func apiTemplateDelete(deps Deps) http.HandlerFunc {
 		}
 		tenant := wmw.Tenant(r.Context())
 		if err := deps.Templates.Delete(r.Context(), tenant.ID, id); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

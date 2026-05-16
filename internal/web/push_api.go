@@ -30,7 +30,7 @@ func apiPush(deps Deps) http.HandlerFunc {
 				writeError(w, r, http.StatusNotFound, "NOT_FOUND", "unknown push token")
 				return
 			}
-			writeError(w, r, http.StatusInternalServerError, "INTERNAL", err.Error())
+			writeInternal(w, r, deps, "push: channel lookup", err)
 			return
 		}
 		if !ch.Enabled {
@@ -65,7 +65,7 @@ func apiPush(deps Deps) http.HandlerFunc {
 
 		pushID, dropped, err := deps.Ingest.Ingest(r.Context(), ch, payload, dedupKey)
 		if err != nil {
-			writeError(w, r, http.StatusInternalServerError, "INTERNAL", err.Error())
+			writeInternal(w, r, deps, "push: ingest", err)
 			return
 		}
 		if dropped {

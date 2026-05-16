@@ -47,7 +47,7 @@ func apiDLQList(deps Deps) http.HandlerFunc {
 		page, perPage := parsePagination(r)
 		rows, total, err := deps.DLQ.ListByTenant(r.Context(), tenant.ID, page, perPage)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		views := make([]dlqView, 0, len(rows))
@@ -72,7 +72,7 @@ func apiDLQReplay(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		newID, err := deps.DLQ.Replay(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{

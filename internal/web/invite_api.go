@@ -62,7 +62,7 @@ func apiInviteList(deps Deps) http.HandlerFunc {
 		admin := wmw.Tenant(r.Context())
 		items, err := deps.Invites.ListByCreator(r.Context(), admin.ID)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		views := make([]inviteView, 0, len(items))
@@ -88,7 +88,7 @@ func apiInviteCreate(deps Deps) http.HandlerFunc {
 		for i := 0; i < count; i++ {
 			inv, err := deps.Auth.GenerateInvite(r.Context(), admin.ID, ttl)
 			if err != nil {
-				writeRepoError(w, r, err)
+				writeRepoError(w, r, deps, err)
 				return
 			}
 			created = append(created, toInviteView(inv))
@@ -112,7 +112,7 @@ func apiInviteDelete(deps Deps) http.HandlerFunc {
 			case errors.Is(err, domain.ErrInviteInvalid):
 				writeError(w, r, http.StatusConflict, "CONFLICT", "invite already consumed")
 			default:
-				writeRepoError(w, r, err)
+				writeRepoError(w, r, deps, err)
 			}
 			return
 		}

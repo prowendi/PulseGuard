@@ -62,7 +62,7 @@ func apiBotList(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		items, err := deps.Bots.ListByTenant(r.Context(), tenant.ID)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		views := make([]botView, 0, len(items))
@@ -96,7 +96,7 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 			Description: p.Description,
 		}
 		if err := deps.Bots.Insert(r.Context(), bot); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, toBotView(bot))
@@ -112,7 +112,7 @@ func apiBotGet(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		bot, err := deps.Bots.GetByID(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toBotView(bot))
@@ -132,7 +132,7 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 		tenant := wmw.Tenant(r.Context())
 		existing, err := deps.Bots.GetByID(r.Context(), tenant.ID, id)
 		if err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		if p.Name != nil {
@@ -154,7 +154,7 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 			existing.Description = *p.Description
 		}
 		if err := deps.Bots.Update(r.Context(), existing); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toBotView(existing))
@@ -169,7 +169,7 @@ func apiBotDelete(deps Deps) http.HandlerFunc {
 		}
 		tenant := wmw.Tenant(r.Context())
 		if err := deps.Bots.Delete(r.Context(), tenant.ID, id); err != nil {
-			writeRepoError(w, r, err)
+			writeRepoError(w, r, deps, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
