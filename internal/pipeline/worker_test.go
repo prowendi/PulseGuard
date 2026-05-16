@@ -105,7 +105,14 @@ func (f *fakeOutbox) ReclaimInFlight(ctx context.Context, olderThan time.Time) (
 func (f *fakeOutbox) get(id int64) *domain.PushOutbox {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.items[id]
+	it := f.items[id]
+	if it == nil {
+		return nil
+	}
+	// Return a snapshot so callers reading fields are race-safe against
+	// concurrent worker tick mutations (Status, Attempts, LastError, ...).
+	cp := *it
+	return &cp
 }
 
 // channels / bots / templates -----------------------------------------
