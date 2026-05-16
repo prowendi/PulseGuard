@@ -8,6 +8,20 @@ import (
 	"github.com/wendi/pulseguard/internal/domain"
 )
 
+// TickerSource produces a periodic notification channel + a stop func.
+// Production uses time.NewTicker; tests inject a manually-driven
+// channel so they can fire each sweep deterministically without
+// time.Sleep (spec §6 forbids sleep-based waits).
+//
+// Refs: code-review-report C-I6.
+type TickerSource func(d time.Duration) (<-chan time.Time, func())
+
+// defaultTicker is the production TickerSource: wraps time.NewTicker.
+func defaultTicker(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(d)
+	return t.C, t.Stop
+}
+
 // CleanupDeps groups the repos cleaned by the housekeeping worker.
 type CleanupDeps struct {
 	Logs     domain.LogRepo
@@ -15,6 +29,10 @@ type CleanupDeps struct {
 	Sessions domain.SessionRepo
 	Outbox   domain.OutboxRepo
 	Clock    domain.Clock
+	// Ticker, when non-nil, replaces time.NewTicker for every sweep
+	// loop in Cleanup.Run. Tests inject a fake source so they can fire
+	// each sweep on demand.
+	Ticker TickerSource
 }
 
 // CleanupCfg captures the cadence + retention knobs.
@@ -54,31 +72,36 @@ func NewCleanup(deps CleanupDeps, cfg CleanupCfg) *Cleanup {
 	if cfg.LogKeepDays <= 0 {
 		cfg.LogKeepDays = 30
 	}
+	if deps.Ticker == nil {
+		deps.Ticker = defaultTicker
+	}
 	return &Cleanup{deps: deps, cfg: cfg}
 }
 
 // Run blocks until ctx is cancelled, firing each sweep on its own ticker.
+// The ticker source comes from CleanupDeps.Ticker so tests can supply a
+// fake channel.
 func (c *Cleanup) Run(ctx context.Context) error {
-	dedupTk := time.NewTicker(c.cfg.DedupSweepInterval)
-	defer dedupTk.Stop()
-	sessTk := time.NewTicker(c.cfg.SessionsSweepInterval)
-	defer sessTk.Stop()
-	logsTk := time.NewTicker(c.cfg.SessionsSweepInterval) // reuse cadence
-	defer logsTk.Stop()
-	reclaimTk := time.NewTicker(time.Minute)
-	defer reclaimTk.Stop()
+	dedupC, dedupStop := c.deps.Ticker(c.cfg.DedupSweepInterval)
+	defer dedupStop()
+	sessC, sessStop := c.deps.Ticker(c.cfg.SessionsSweepInterval)
+	defer sessStop()
+	logsC, logsStop := c.deps.Ticker(c.cfg.SessionsSweepInterval) // reuse cadence
+	defer logsStop()
+	reclaimC, reclaimStop := c.deps.Ticker(time.Minute)
+	defer reclaimStop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dedupTk.C:
+		case <-dedupC:
 			_, _ = c.SweepDedup(ctx)
-		case <-sessTk.C:
+		case <-sessC:
 			_, _ = c.SweepSessions(ctx)
-		case <-logsTk.C:
+		case <-logsC:
 			_, _ = c.SweepLogs(ctx)
-		case <-reclaimTk.C:
+		case <-reclaimC:
 			_, _ = c.ReclaimInflight(ctx)
 		}
 	}
