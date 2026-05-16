@@ -1,21 +1,36 @@
-{{ define "nav" }}<header class="topbar">
-  <div class="brand"><a href="/ui/dashboard" style="color:inherit">PulseGuard</a></div>
-  <nav>
-    {{ if .Tenant }}
-      <a href="/ui/dashboard" class="{{ if eq .Active "dashboard" }}active{{ end }}">概览</a>
-      <a href="/ui/bots" class="{{ if eq .Active "bots" }}active{{ end }}">Bots</a>
-      <a href="/ui/templates" class="{{ if eq .Active "templates" }}active{{ end }}">模板</a>
-      <a href="/ui/channels" class="{{ if eq .Active "channels" }}active{{ end }}">通道</a>
-      <a href="/ui/logs" class="{{ if eq .Active "logs" }}active{{ end }}">日志</a>
-      <a href="/ui/deadletters" class="{{ if eq .Active "deadletters" }}active{{ end }}">死信</a>
-      {{ if eq .Tenant.Role "admin" }}<a href="/ui/invites" class="{{ if eq .Active "invites" }}active{{ end }}">邀请码</a>{{ end }}
-      <form method="POST" action="/ui/logout" style="display:inline;margin-left:12px">
-        <input type="hidden" name="csrf" value="{{ .CSRF }}">
-        <button class="secondary" style="background:transparent;color:#d1d5db;border-color:transparent">退出 ({{ .Tenant.Email }})</button>
-      </form>
-    {{ else }}
-      <a href="/ui/login">登录</a>
-      <a href="/ui/register">注册</a>
+{{ define "sidebar" }}<aside class="w-60 shrink-0 bg-slate-900 text-slate-100 flex flex-col">
+  <div class="h-14 px-5 flex items-center border-b border-slate-800">
+    <a href="/ui/dashboard" class="text-lg font-semibold tracking-tight text-white">PulseGuard</a>
+  </div>
+  <nav class="flex-1 px-3 py-4 space-y-1 text-sm">
+    <a href="/ui/dashboard" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "dashboard" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "dashboard" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>概览</a>
+    <a href="/ui/bots" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "bots" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "bots" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>Bots</a>
+    <a href="/ui/templates" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "templates" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "templates" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>模板</a>
+    <a href="/ui/channels" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "channels" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "channels" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>通道</a>
+    <a href="/ui/commands" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "commands" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "commands" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>命令</a>
+    <a href="/ui/subscribers" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "subscribers" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "subscribers" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>订阅者</a>
+    <a href="/ui/logs" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "logs" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "logs" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>推送日志</a>
+    <a href="/ui/deadletters" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "deadletters" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "deadletters" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>死信队列</a>
+    {{ if eq .Tenant.Role "admin" }}
+      <div class="pt-3 mt-3 border-t border-slate-800 text-[11px] uppercase tracking-wider text-slate-500 px-3 pb-1">管理员</div>
+      <a href="/ui/invites" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "invites" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "invites" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>邀请码</a>
     {{ end }}
   </nav>
+  <div class="px-5 py-3 text-[11px] text-slate-500 border-t border-slate-800 truncate">{{ .Tenant.Email }}</div>
+</aside>{{ end }}
+
+{{ define "topbar" }}<header class="h-14 bg-white border-b border-slate-200 shadow-sm flex items-center justify-between px-6 sticky top-0 z-10">
+  <div class="flex items-center gap-3">
+    <h1 class="text-base font-semibold text-slate-900">{{ .Title }}</h1>
+  </div>
+  <div class="flex items-center gap-3 text-sm">
+    <span class="text-slate-600 hidden sm:inline">{{ .Tenant.Email }}</span>
+    {{ if eq .Tenant.Role "admin" }}<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">admin</span>{{ end }}
+    <form method="POST" action="/ui/logout" class="inline">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <button type="submit" class="text-slate-600 hover:text-slate-900 transition-colors">退出</button>
+    </form>
+  </div>
 </header>{{ end }}
+
+{{ define "nav" }}{{/* legacy entrypoint retained for backwards compatibility */}}{{ end }}

@@ -1,62 +1,101 @@
 {{ define "channels-page" }}{{ template "layout-open" . }}
-<div class="card">
-  <h1>通道</h1>
-  <p class="muted">每个通道绑定 1 个 Bot + 1 个模板 + 1 个 chat_id；push_token 用于公开 webhook。</p>
-  <table>
-    <thead><tr><th>ID</th><th>名称</th><th>Push Token</th><th>Bot</th><th>Tpl</th><th>Chat</th><th>Rate</th><th>Dedup(s)</th><th>状态</th><th>操作</th></tr></thead>
-    <tbody>
-      {{ $csrf := .CSRF }}
-      {{ range .Channels }}
-      <tr>
-        <td>{{ .ID }}</td>
-        <td>{{ .Name }}</td>
-        <td><code>{{ .PushToken }}</code></td>
-        <td>{{ .BotID }}</td>
-        <td>{{ .TemplateID }}</td>
-        <td>{{ .ChatID }}</td>
-        <td>{{ .RatePerMin }}/min</td>
-        <td>{{ .DedupWindowS }}</td>
-        <td>{{ if .Enabled }}<span class="badge ok">启用</span>{{ else }}<span class="badge err">禁用</span>{{ end }}</td>
-        <td class="row-actions">
-          <form method="POST" action="/ui/channels/{{ .ID }}/rotate-token">
-            <input type="hidden" name="csrf" value="{{ $csrf }}">
-            <button class="secondary">轮换 Token</button>
-          </form>
-          <form method="POST" action="/ui/channels/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');">
-            <input type="hidden" name="csrf" value="{{ $csrf }}">
-            <button class="danger">删除</button>
-          </form>
-        </td>
-      </tr>
-      {{ end }}
-      {{ if not .Channels }}<tr><td colspan="10" class="muted">尚无通道</td></tr>{{ end }}
-    </tbody>
-  </table>
+<div class="bg-white rounded-lg shadow border border-slate-200 overflow-hidden mb-6">
+  <div class="px-6 py-4 border-b border-slate-200">
+    <h2 class="text-base font-semibold text-slate-900">通道</h2>
+    <p class="text-xs text-slate-500 mt-0.5">每个通道绑定 1 个 Bot + 1 个 chat_id + 1 个或多个模板；push_token 用于公开 webhook。</p>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">ID</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">名称</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Push Token</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Bot</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Tpl</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Chat</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Rate</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Dedup</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">状态</th>
+          <th class="px-3 py-2 text-right font-medium text-slate-500 uppercase tracking-wider text-xs">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {{ $csrf := .CSRF }}
+        {{ range .Channels }}
+        <tr class="even:bg-slate-50/40">
+          <td class="px-3 py-2 text-slate-500 font-mono text-xs">{{ .ID }}</td>
+          <td class="px-3 py-2 text-slate-900 font-medium">{{ .Name }}</td>
+          <td class="px-3 py-2"><code class="text-xs text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{{ .PushToken }}</code></td>
+          <td class="px-3 py-2 text-slate-600">#{{ .BotID }}</td>
+          <td class="px-3 py-2 text-slate-600 text-xs">#{{ .TemplateID }}</td>
+          <td class="px-3 py-2 text-slate-600 font-mono text-xs">{{ .ChatID }}</td>
+          <td class="px-3 py-2 text-slate-600">{{ .RatePerMin }}/min</td>
+          <td class="px-3 py-2 text-slate-600">{{ .DedupWindowS }}s</td>
+          <td class="px-3 py-2">
+            {{ if .Enabled }}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">启用</span>
+            {{ else }}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">禁用</span>{{ end }}
+          </td>
+          <td class="px-3 py-2 text-right whitespace-nowrap">
+            <form method="POST" action="/ui/channels/{{ .ID }}/rotate-token" class="inline">
+              <input type="hidden" name="csrf" value="{{ $csrf }}">
+              <button class="text-xs text-blue-600 hover:text-blue-700 font-medium mr-3">轮换</button>
+            </form>
+            <form method="POST" action="/ui/channels/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');" class="inline">
+              <input type="hidden" name="csrf" value="{{ $csrf }}">
+              <button class="text-xs text-red-600 hover:text-red-700 font-medium">删除</button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+        {{ if not .Channels }}<tr><td colspan="10" class="px-4 py-8 text-center text-slate-400 text-sm">尚无通道</td></tr>{{ end }}
+      </tbody>
+    </table>
+  </div>
 </div>
 
-<div class="card">
-  <h2>新建通道</h2>
-  <form method="POST" action="/ui/channels">
+<div class="bg-white rounded-lg shadow border border-slate-200 p-6">
+  <h2 class="text-base font-semibold text-slate-900 mb-4">新建通道</h2>
+  <form method="POST" action="/ui/channels" class="space-y-4 max-w-2xl">
     <input type="hidden" name="csrf" value="{{ .CSRF }}">
-    <div class="field"><label>名称</label><input type="text" name="name" required maxlength="64"></div>
-    <div class="field">
-      <label>Bot</label>
-      <select name="bot_id" required>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">名称</label>
+        <input type="text" name="name" required maxlength="64" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Chat ID</label>
+        <input type="text" name="chat_id" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+      </div>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">Bot</label>
+      <select name="bot_id" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
         <option value="">请选择…</option>
         {{ range .Bots }}<option value="{{ .ID }}">{{ .Name }} (***{{ .BotTokenLast4 }})</option>{{ end }}
       </select>
     </div>
-    <div class="field">
-      <label>模板</label>
-      <select name="template_id" required>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">模板</label>
+      <select name="template_id" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
         <option value="">请选择…</option>
         {{ range .Templates }}<option value="{{ .ID }}">{{ .Name }} [{{ .ParseMode }}]</option>{{ end }}
       </select>
+      <p class="text-xs text-slate-500 mt-1">V3.B1 起支持多模板绑定，B1 完成前每通道仍为单模板。</p>
     </div>
-    <div class="field"><label>Chat ID</label><input type="text" name="chat_id" required></div>
-    <div class="field"><label>Rate per min</label><input type="number" name="rate_per_min" value="60" min="0"></div>
-    <div class="field"><label>Dedup window (秒)</label><input type="number" name="dedup_window_s" value="0" min="0"></div>
-    <button type="submit">创建</button>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Rate per min (0 = 不限)</label>
+        <input type="number" name="rate_per_min" value="60" min="0" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Dedup window (秒，0 = 禁用)</label>
+        <input type="number" name="dedup_window_s" value="0" min="0" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+      </div>
+    </div>
+    <div class="pt-2">
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm px-4 py-2 rounded-md transition-colors">创建通道</button>
+    </div>
   </form>
 </div>
 {{ template "layout-close" . }}{{ end }}

@@ -1,34 +1,49 @@
 {{ define "deadletters-page" }}{{ template "layout-open" . }}
-<div class="card">
-  <h1>死信队列</h1>
-  <p class="muted">达到最大重试或永久错误的推送进入此处；共 {{ .Total }} 条（第 {{ .Page }} 页）。</p>
-  <table>
-    <thead><tr><th>ID</th><th>时间</th><th>通道</th><th>Outbox</th><th>尝试</th><th>错误</th><th>Payload</th><th>操作</th></tr></thead>
-    <tbody>
-      {{ $csrf := .CSRF }}
-      {{ range .DLQ }}
-      <tr>
-        <td>{{ .ID }}</td>
-        <td>{{ .CreatedAt }}</td>
-        <td>{{ .ChannelID }}</td>
-        <td>{{ .OutboxID }}</td>
-        <td>{{ .Attempts }}</td>
-        <td><code>{{ .LastError }}</code></td>
-        <td><pre style="max-width:360px;white-space:pre-wrap">{{ .PayloadJSON }}</pre></td>
-        <td>
-          <form method="POST" action="/ui/deadletters/{{ .ID }}/replay">
-            <input type="hidden" name="csrf" value="{{ $csrf }}">
-            <button class="secondary">重投</button>
-          </form>
-        </td>
-      </tr>
-      {{ end }}
-      {{ if not .DLQ }}<tr><td colspan="8" class="muted">尚无死信</td></tr>{{ end }}
-    </tbody>
-  </table>
-  <div class="row-actions" style="margin-top:12px">
-    {{ if gt .Page 1 }}<a class="button secondary" href="/ui/deadletters?page={{ sub .Page 1 }}&per_page={{ .PerPage }}">上一页</a>{{ end }}
-    {{ if hasMore .Page .PerPage .Total }}<a class="button secondary" href="/ui/deadletters?page={{ add .Page 1 }}&per_page={{ .PerPage }}">下一页</a>{{ end }}
+<div class="bg-white rounded-lg shadow border border-slate-200 overflow-hidden mb-6">
+  <div class="px-6 py-4 border-b border-slate-200">
+    <h2 class="text-base font-semibold text-slate-900">死信队列</h2>
+    <p class="text-xs text-slate-500 mt-0.5">达到最大重试或永久错误的推送进入此处；共 {{ .Total }} 条（第 {{ .Page }} 页）。</p>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">ID</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">时间</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">通道</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Outbox</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">尝试</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">错误</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Payload</th>
+          <th class="px-3 py-2 text-right font-medium text-slate-500 uppercase tracking-wider text-xs">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {{ $csrf := .CSRF }}
+        {{ range .DLQ }}
+        <tr class="even:bg-slate-50/40">
+          <td class="px-3 py-2 text-slate-500 font-mono text-xs">{{ .ID }}</td>
+          <td class="px-3 py-2 text-slate-600 whitespace-nowrap font-mono text-xs">{{ .CreatedAt }}</td>
+          <td class="px-3 py-2 text-slate-700">#{{ .ChannelID }}</td>
+          <td class="px-3 py-2 text-slate-600">#{{ .OutboxID }}</td>
+          <td class="px-3 py-2 text-slate-600">{{ .Attempts }}</td>
+          <td class="px-3 py-2"><code class="text-xs text-red-700">{{ .LastError }}</code></td>
+          <td class="px-3 py-2"><pre class="text-xs text-slate-600 max-w-sm whitespace-pre-wrap font-mono">{{ .PayloadJSON }}</pre></td>
+          <td class="px-3 py-2 text-right">
+            <form method="POST" action="/ui/deadletters/{{ .ID }}/replay" class="inline">
+              <input type="hidden" name="csrf" value="{{ $csrf }}">
+              <button class="text-xs text-blue-600 hover:text-blue-700 font-medium">重投</button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+        {{ if not .DLQ }}<tr><td colspan="8" class="px-4 py-8 text-center text-slate-400 text-sm">尚无死信</td></tr>{{ end }}
+      </tbody>
+    </table>
+  </div>
+  <div class="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+    {{ if gt .Page 1 }}<a class="bg-white hover:bg-slate-100 text-slate-700 text-sm px-3 py-1.5 rounded-md border border-slate-300" href="/ui/deadletters?page={{ sub .Page 1 }}&per_page={{ .PerPage }}">← 上一页</a>{{ end }}
+    {{ if hasMore .Page .PerPage .Total }}<a class="bg-white hover:bg-slate-100 text-slate-700 text-sm px-3 py-1.5 rounded-md border border-slate-300" href="/ui/deadletters?page={{ add .Page 1 }}&per_page={{ .PerPage }}">下一页 →</a>{{ end }}
   </div>
 </div>
 {{ template "layout-close" . }}{{ end }}

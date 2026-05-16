@@ -1,0 +1,30 @@
+[
+  {
+    "id": "basic-alert",
+    "title": "基础告警 (MarkdownV2)",
+    "description": "最小可用 MarkdownV2 告警模板：图标 + 主标题 + 主机 + 数值 + 详情链接。",
+    "parse_mode": "MarkdownV2",
+    "body": "{{ if eq .level \"critical\" }}🚨{{ else }}⚠️{{ end }} *{{ .title | escMD }}*\n\nHost: `{{ .host | escMD }}`\nValue: *{{ .value | escMD }}*\n{{ if .url }}[查看详情]({{ .url }}){{ end }}"
+  },
+  {
+    "id": "alertmanager",
+    "title": "Prometheus AlertManager 风格",
+    "description": "兼容 AlertManager webhook payload，按 status (firing/resolved) 分支。",
+    "parse_mode": "MarkdownV2",
+    "body": "{{ if eq .status \"firing\" }}🔥 *FIRING*{{ else }}✅ *RESOLVED*{{ end }}\n\n*{{ .alertname | escMD }}*\nSeverity: `{{ .severity | escMD }}`\nInstance: `{{ .instance | escMD }}`\n\n{{ if .summary }}> {{ .summary | escMD }}{{ end }}"
+  },
+  {
+    "id": "inspection-report",
+    "title": "巡检报告 (循环显示)",
+    "description": "用 range 输出 items 列表；适合每日巡检汇总。",
+    "parse_mode": "MarkdownV2",
+    "body": "📋 *{{ .title | escMD }}*\n\n时间: `{{ .timestamp | escMD }}`\n执行人: {{ .operator | escMD }}\n\n*检查项*:\n{{ range .items }}\\- {{ . | escMD }}\n{{ end }}\n{{ if .summary }}\n_总结_: {{ .summary | escMD }}{{ end }}"
+  },
+  {
+    "id": "deploy-notice",
+    "title": "部署通知 (代码块 + 链接)",
+    "description": "服务部署成功/失败通知；带变更链接、commit hash 代码块、错误堆栈。",
+    "parse_mode": "MarkdownV2",
+    "body": "{{ if eq .status \"success\" }}🚀 *部署成功*{{ else }}❌ *部署失败*{{ end }}\n\nService: `{{ .service | escMD }}`\nEnv: `{{ .env | escMD }}`\nCommit: `{{ .commit | escMD }}`\n\n{{ if .changelog }}[查看变更]({{ .changelog }}){{ end }}\n\n{{ if .error }}```\n{{ .error }}\n```{{ end }}"
+  }
+]

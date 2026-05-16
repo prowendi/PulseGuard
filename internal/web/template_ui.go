@@ -13,6 +13,7 @@ import (
 type templateListPage struct {
 	pageData
 	Templates []templateView
+	Demos     []templateDemo
 }
 
 func installTemplatesUIRoutes(r chi.Router, deps Deps) {
@@ -93,5 +94,6 @@ func renderTemplatePage(w http.ResponseWriter, r *http.Request, deps Deps, tenan
 			Flash:  fl,
 		},
 		Templates: views,
+		Demos:     templateDemos(),
 	})
 }

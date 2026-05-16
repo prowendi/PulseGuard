@@ -320,7 +320,7 @@ func TestUIBotsRenders(t *testing.T) {
 	bs, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	body := string(bs)
-	if !strings.Contains(body, "<h1>Bots</h1>") {
+	if !strings.Contains(body, ">Bots<") {
 		t.Fatalf("body missing Bots heading: %s", body[:200])
 	}
 	if !strings.Contains(body, `action="/ui/bots"`) {

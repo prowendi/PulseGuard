@@ -227,7 +227,7 @@ func TestUIInvitesAdminOnly(t *testing.T) {
 	}
 	bs, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(bs), "邀请码（管理员）") {
+	if !strings.Contains(string(bs), "邀请码") || !strings.Contains(string(bs), "管理员") {
 		t.Fatalf("admin body missing heading: %s", string(bs)[:200])
 	}
 

@@ -103,16 +103,49 @@ func uiLogoutPost(deps Deps) http.HandlerFunc {
 	}
 }
 
-func uiDashboard(_ Deps) http.HandlerFunc {
+// dashboardPage feeds the dashboard the four stat cards + recent log
+// rows the home view summarises. Counts are best-effort: failures here
+// degrade to zero so the page always renders.
+type dashboardPage struct {
+	pageData
+	BotCount      int
+	ChannelCount  int
+	TemplateCount int
+	RecentPushes  int
+	DLQCount      int
+	RecentLogs    []logView
+}
+
+func uiDashboard(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		t := wmw.Tenant(r.Context())
 		tok := readCSRFCookie(r)
-		_ = Render(w, http.StatusOK, "dashboard-page", pageData{
-			Title:  "概览",
-			Tenant: t,
-			Active: "dashboard",
-			CSRF:   tok,
-		})
+
+		var page dashboardPage
+		page.pageData = pageData{Title: "概览", Tenant: t, Active: "dashboard", CSRF: tok}
+
+		if bots, err := deps.Bots.ListByTenant(r.Context(), t.ID); err == nil {
+			page.BotCount = len(bots)
+		}
+		if chs, err := deps.Channels.ListByTenant(r.Context(), t.ID); err == nil {
+			page.ChannelCount = len(chs)
+		}
+		if tpls, err := deps.Templates.ListByTenant(r.Context(), t.ID); err == nil {
+			page.TemplateCount = len(tpls)
+		}
+		if rows, total, err := deps.Logs.ListByTenant(r.Context(), t.ID, 1, 10); err == nil {
+			page.RecentPushes = total
+			views := make([]logView, 0, len(rows))
+			for _, l := range rows {
+				views = append(views, toLogView(l))
+			}
+			page.RecentLogs = views
+		}
+		if _, total, err := deps.DLQ.ListByTenant(r.Context(), t.ID, 1, 1); err == nil {
+			page.DLQCount = total
+		}
+
+		_ = Render(w, http.StatusOK, "dashboard-page", page)
 	}
 }
 

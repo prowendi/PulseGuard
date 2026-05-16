@@ -19,5 +19,5 @@ import "embed"
 //go:embed web/templates/*.html
 //go:embed web/templates/partials/*.html
 //go:embed web/static/htmx.min.js web/static/app.css web/static/app.js
-//go:embed web/static/tailwind.min.css
+//go:embed web/static/tailwind.min.css web/static/template-editor.js
 var WebFS embed.FS
