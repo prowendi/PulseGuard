@@ -3,7 +3,10 @@ module github.com/wendi/pulseguard
 go 1.25.1
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-chi/chi/v5 v5.1.0 // indirect
+	github.com/go-chi/httprate v0.14.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

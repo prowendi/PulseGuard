@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"ls -la E:/a2026/PulseGuard/internal/store/ E:/a2026/PulseGuard/internal/auth/ E:/a2026/PulseGuard/internal/render/ E:/a2026/PulseGuard/internal/tg/ E:/a2026/PulseGuard/internal/pipeline/ E...",
+  "error": "Exit code 2\nls: cannot access 'E:/a2026/PulseGuard/internal/web/': No such file or directory\nE:/a2026/PulseGuard/internal/auth/:\ntotal 32\ndrwxr-xr-x 1 Wendi 197121    0 May 17 01:11 .\ndrwxr-xr-x 1 Wendi 197121    0 May 17 01:16 ..\n-rw-r--r-- 1 Wendi 197121  878 May 17 01:11 hash.go\n-rw-r--r-- 1 Wendi 197121  916 May 17 01:11 invite.go\n-rw-r--r-- 1 Wendi 197121 6215 May 17 01:11 service.go\n-rw-r--r-- 1 Wendi 197121 8829 May 17 01:11 service_test.go\n\nE:/a2026/PulseGuard/internal/pipeline/:\ntotal 7...",
+  "timestamp": "2026-05-16T17:27:28.349Z",
+  "retry_count": 1
+}

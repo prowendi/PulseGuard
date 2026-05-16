@@ -1,0 +1,21 @@
+{{ define "nav" }}<header class="topbar">
+  <div class="brand"><a href="/ui/dashboard" style="color:inherit">PulseGuard</a></div>
+  <nav>
+    {{ if .Tenant }}
+      <a href="/ui/dashboard" class="{{ if eq .Active "dashboard" }}active{{ end }}">概览</a>
+      <a href="/ui/bots" class="{{ if eq .Active "bots" }}active{{ end }}">Bots</a>
+      <a href="/ui/templates" class="{{ if eq .Active "templates" }}active{{ end }}">模板</a>
+      <a href="/ui/channels" class="{{ if eq .Active "channels" }}active{{ end }}">通道</a>
+      <a href="/ui/logs" class="{{ if eq .Active "logs" }}active{{ end }}">日志</a>
+      <a href="/ui/deadletters" class="{{ if eq .Active "deadletters" }}active{{ end }}">死信</a>
+      {{ if eq .Tenant.Role "admin" }}<a href="/ui/invites" class="{{ if eq .Active "invites" }}active{{ end }}">邀请码</a>{{ end }}
+      <form method="POST" action="/ui/logout" style="display:inline;margin-left:12px">
+        <input type="hidden" name="csrf" value="{{ .CSRF }}">
+        <button class="secondary" style="background:transparent;color:#d1d5db;border-color:transparent">退出 ({{ .Tenant.Email }})</button>
+      </form>
+    {{ else }}
+      <a href="/ui/login">登录</a>
+      <a href="/ui/register">注册</a>
+    {{ end }}
+  </nav>
+</header>{{ end }}
