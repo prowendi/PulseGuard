@@ -135,3 +135,57 @@ func TestInviteRepo_Insert_RejectsEmptyCode(t *testing.T) {
 		t.Fatalf("empty code = %v want ErrValidation", err)
 	}
 }
+
+func TestInviteRepo_Delete(t *testing.T) {
+	tr, ir, admin, _ := inviteSetup(t)
+	ctx := context.Background()
+
+	// Setup a second admin to prove cross-admin isolation.
+	other := makeTenant("other@x.com")
+	other.Role = domain.RoleAdmin
+	if err := tr.Insert(ctx, other); err != nil {
+		t.Fatalf("seed other admin: %v", err)
+	}
+
+	// 1. Delete unused invite owned by admin.
+	inv := &domain.InviteCode{Code: "DELME-1", CreatedBy: admin.ID}
+	if err := ir.Insert(ctx, inv); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := ir.Delete(ctx, "DELME-1", admin.ID); err != nil {
+		t.Fatalf("Delete unused: %v", err)
+	}
+	if _, err := ir.Lock(ctx, "DELME-1"); !errors.Is(err, domain.ErrInviteInvalid) {
+		t.Fatalf("post-delete Lock = %v want ErrInviteInvalid", err)
+	}
+
+	// 2. Delete already-consumed invite should refuse with ErrInviteInvalid.
+	consumer := makeTenant("consumer@x.com")
+	if err := tr.Insert(ctx, consumer); err != nil {
+		t.Fatalf("seed consumer: %v", err)
+	}
+	used := &domain.InviteCode{Code: "USED-2", CreatedBy: admin.ID}
+	if err := ir.Insert(ctx, used); err != nil {
+		t.Fatalf("Insert used: %v", err)
+	}
+	if err := ir.Consume(ctx, "USED-2", consumer.ID); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if err := ir.Delete(ctx, "USED-2", admin.ID); !errors.Is(err, domain.ErrInviteInvalid) {
+		t.Fatalf("Delete used = %v want ErrInviteInvalid", err)
+	}
+
+	// 3. Delete invite owned by another admin must report NotFound.
+	other1 := &domain.InviteCode{Code: "OWNED-3", CreatedBy: other.ID}
+	if err := ir.Insert(ctx, other1); err != nil {
+		t.Fatalf("Insert other-owned: %v", err)
+	}
+	if err := ir.Delete(ctx, "OWNED-3", admin.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cross-admin Delete = %v want ErrNotFound", err)
+	}
+
+	// 4. Delete missing code returns NotFound.
+	if err := ir.Delete(ctx, "NOPE", admin.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing Delete = %v want ErrNotFound", err)
+	}
+}

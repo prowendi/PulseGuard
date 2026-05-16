@@ -118,6 +118,40 @@ func (r *InviteRepo) ListByCreator(ctx context.Context, adminID int64) ([]*domai
 	return out, rows.Err()
 }
 
+// Delete removes an unused invite code owned by adminID. Returns
+// ErrNotFound when no matching row exists for the (code, created_by)
+// pair, and ErrInviteInvalid when the code has already been consumed.
+// The check + delete run in a single IMMEDIATE transaction so a
+// concurrent Consume cannot squeeze in between the lookup and the
+// delete.
+func (r *InviteRepo) Delete(ctx context.Context, code string, adminID int64) error {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var usedAt sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		SELECT used_at FROM invite_codes WHERE code = ? AND created_by = ?`,
+		code, adminID).Scan(&usedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lookup invite: %w", err)
+	}
+	if usedAt.Valid {
+		return domain.ErrInviteInvalid
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM invite_codes WHERE code = ? AND created_by = ?`,
+		code, adminID); err != nil {
+		return fmt.Errorf("delete invite: %w", err)
+	}
+	return tx.Commit()
+}
+
 func lockTx(ctx context.Context, tx *sql.Tx, code string) (*domain.InviteCode, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT code, created_by, used_by, expires_at, used_at, created_at

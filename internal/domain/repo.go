@@ -20,6 +20,10 @@ type InviteRepo interface {
 	Lock(ctx context.Context, code string) (*InviteCode, error)
 	Consume(ctx context.Context, code string, tenantID int64) error
 	ListByCreator(ctx context.Context, adminID int64) ([]*InviteCode, error)
+	// Delete removes an unused invite code owned by adminID. Returns
+	// ErrNotFound if no row matches that (code, created_by) pair, and
+	// ErrInviteInvalid if the code has already been consumed.
+	Delete(ctx context.Context, code string, adminID int64) error
 }
 
 // BotRepo manages tenant-owned bot rows. Implementations encrypt/decrypt
