@@ -117,3 +117,30 @@ type SessionRepo interface {
 type Sender interface {
 	Send(ctx context.Context, botToken, chatID, parseMode, text string) (msgID int64, err error)
 }
+
+// CommandRepo manages tenant-owned Starlark commands. GetByBotAndName
+// is the listener's hot-path resolver: it joins commands to bots via
+// the bots.tenant_id column so a listener can dispatch with just the
+// (bot_id, name) pair available in an inbound Telegram update.
+type CommandRepo interface {
+	Insert(ctx context.Context, c *Command) error
+	Update(ctx context.Context, c *Command) error
+	Delete(ctx context.Context, tenantID, id int64) error
+	GetByID(ctx context.Context, tenantID, id int64) (*Command, error)
+	GetByTenantAndName(ctx context.Context, tenantID int64, name string) (*Command, error)
+	ListByTenant(ctx context.Context, tenantID int64) ([]*Command, error)
+	// GetByBotAndName resolves the tenant-scoped command for the bot
+	// owner. ErrNotFound is returned for unknown bot, unknown command,
+	// or cross-tenant mismatches. Listener-only API.
+	GetByBotAndName(ctx context.Context, botID int64, name string) (*Command, error)
+}
+
+// SubscriberRepo records (command, bot, chat_id) tuples and exposes
+// list/delete for the UI. Upsert is idempotent: re-inserting the same
+// (command, chat, platform) triple bumps last_seen_at.
+type SubscriberRepo interface {
+	Upsert(ctx context.Context, s *Subscriber) error
+	ListByCommand(ctx context.Context, tenantID, commandID int64) ([]*Subscriber, error)
+	ListByTenant(ctx context.Context, tenantID int64) ([]*Subscriber, error)
+	Delete(ctx context.Context, tenantID, id int64) error
+}
