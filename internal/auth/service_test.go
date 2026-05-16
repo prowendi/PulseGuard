@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 // transactional invariants (unique email, invite consume race) get exercised.
 type testFixture struct {
 	svc      *Service
+	db       *sql.DB
 	tenants  *store.TenantRepo
 	invites  *store.InviteRepo
 	sessions *store.SessionRepo
@@ -44,8 +47,8 @@ func newFixture(t *testing.T) *testFixture {
 		CookieSecure: true,
 		BcryptCost:   4, // minimum legal cost for fast tests
 	}
-	svc := New(tenants, invites, sessions, cfg, clk)
-	return &testFixture{svc: svc, tenants: tenants, invites: invites, sessions: sessions, clock: clk}
+	svc := New(db, tenants, invites, sessions, cfg, clk)
+	return &testFixture{svc: svc, db: db, tenants: tenants, invites: invites, sessions: sessions, clock: clk}
 }
 
 // seedAdminAndInvite returns (adminID, inviteCode) ready for registration.
@@ -295,5 +298,75 @@ func TestHashPasswordRoundtrip(t *testing.T) {
 	}
 	if err := CompareHashAndPassword(h, "wrong"); err == nil {
 		t.Fatalf("expected mismatch error")
+	}
+}
+
+// TestRegisterAtomicityRace fires two goroutines racing to register
+// with the SAME invite code (different emails). Exactly one must
+// succeed and consume the code; the other must observe
+// ErrInviteInvalid. Regression guard for code-review-report C-I3.
+//
+// Pre-R10 the deferred-tx flow could let both callers Lock, both
+// Insert their tenants, and then the second Consume would return a
+// confusing error. With the single-tx Register the SQLite
+// IMMEDIATE-write lock makes the second caller wait, observe
+// UsedAt != nil, and return ErrInviteInvalid.
+func TestRegisterAtomicityRace(t *testing.T) {
+	f := newFixture(t)
+	_, code := f.seedAdminAndInvite(t, time.Hour)
+	ctx := context.Background()
+
+	type result struct {
+		ok  bool
+		err error
+	}
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _, err := f.svc.Register(ctx, "a@example.com", "pw1", code)
+		results <- result{ok: err == nil, err: err}
+	}()
+	go func() {
+		defer wg.Done()
+		_, _, err := f.svc.Register(ctx, "b@example.com", "pw2", code)
+		results <- result{ok: err == nil, err: err}
+	}()
+	wg.Wait()
+	close(results)
+
+	var wins, losses int
+	var loserErr error
+	for r := range results {
+		if r.ok {
+			wins++
+		} else {
+			losses++
+			loserErr = r.err
+		}
+	}
+	if wins != 1 || losses != 1 {
+		t.Fatalf("wins=%d losses=%d, want exactly 1/1 (race protection)", wins, losses)
+	}
+	if !errors.Is(loserErr, domain.ErrInviteInvalid) {
+		t.Fatalf("loser err = %v, want ErrInviteInvalid", loserErr)
+	}
+
+	// The invite must be consumed by the winner only.
+	inv, err := f.invites.Lock(ctx, code)
+	if err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	if inv.UsedAt == nil {
+		t.Fatalf("invite should be consumed after race")
+	}
+	// And the DB must hold exactly one user tenant (admin + 1 = 2).
+	var n int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM tenants WHERE role = 'user'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("user tenants = %d, want 1 (winner only)", n)
 	}
 }

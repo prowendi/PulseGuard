@@ -23,6 +23,23 @@ func NewTenantRepo(db *sql.DB, clock domain.Clock) *TenantRepo {
 // Insert writes a new tenant row. CreatedAt/UpdatedAt are taken from the
 // clock; the inserted row's ID is written back into t.
 func (r *TenantRepo) Insert(ctx context.Context, t *domain.Tenant) error {
+	return r.InsertTx(ctx, r.db, t)
+}
+
+// txExec is the subset of *sql.Tx / *sql.DB / *sql.Conn that the Tx
+// helpers rely on. Allows the Register flow to share a single
+// transaction across repos.
+type txExec interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// InsertTx is the explicit-transaction variant of Insert. Callers
+// running multi-repo invariants (auth.Register uses tenant + invite +
+// session inserts in one tx) pass in the active *sql.Tx so the rows
+// commit or rollback atomically.
+func (r *TenantRepo) InsertTx(ctx context.Context, tx txExec, t *domain.Tenant) error {
 	if t == nil {
 		return errors.New("tenant is nil")
 	}
@@ -39,7 +56,7 @@ func (r *TenantRepo) Insert(ctx context.Context, t *domain.Tenant) error {
 		t.Status = domain.TenantActive
 	}
 	now := nowMs(r.clock)
-	res, err := r.db.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO tenants
 		  (email, password_hash, display_name, role, status, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -59,14 +76,23 @@ func (r *TenantRepo) Insert(ctx context.Context, t *domain.Tenant) error {
 
 // GetByEmail returns the tenant with the matching email or ErrNotFound.
 func (r *TenantRepo) GetByEmail(ctx context.Context, email string) (*domain.Tenant, error) {
-	return r.queryOne(ctx, `
+	return r.queryOneTx(ctx, r.db, `
+		SELECT id, email, password_hash, display_name, role, status, created_at, updated_at
+		  FROM tenants WHERE email = ?`, email)
+}
+
+// GetByEmailTx is the explicit-transaction variant — needed by
+// auth.Register to check for duplicate emails inside the same write
+// transaction as the insert.
+func (r *TenantRepo) GetByEmailTx(ctx context.Context, tx txExec, email string) (*domain.Tenant, error) {
+	return r.queryOneTx(ctx, tx, `
 		SELECT id, email, password_hash, display_name, role, status, created_at, updated_at
 		  FROM tenants WHERE email = ?`, email)
 }
 
 // GetByID returns the tenant with the matching id or ErrNotFound.
 func (r *TenantRepo) GetByID(ctx context.Context, id int64) (*domain.Tenant, error) {
-	return r.queryOne(ctx, `
+	return r.queryOneTx(ctx, r.db, `
 		SELECT id, email, password_hash, display_name, role, status, created_at, updated_at
 		  FROM tenants WHERE id = ?`, id)
 }
@@ -83,11 +109,11 @@ func (r *TenantRepo) CountActive(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-func (r *TenantRepo) queryOne(ctx context.Context, q string, args ...any) (*domain.Tenant, error) {
+func (r *TenantRepo) queryOneTx(ctx context.Context, tx txExec, q string, args ...any) (*domain.Tenant, error) {
 	t := &domain.Tenant{}
 	var role, status string
 	var createdMs, updatedMs int64
-	err := r.db.QueryRowContext(ctx, q, args...).Scan(
+	err := tx.QueryRowContext(ctx, q, args...).Scan(
 		&t.ID, &t.Email, &t.PasswordHash, &t.DisplayName,
 		&role, &status, &createdMs, &updatedMs,
 	)

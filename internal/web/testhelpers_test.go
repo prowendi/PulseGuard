@@ -75,7 +75,7 @@ func newTestHarness(t *testing.T) *testHarness {
 	cfg.Security.CookieSecure = false
 	cfg.Security.BcryptCost = 4 // fast bcrypt for tests
 
-	authSvc := auth.New(tenants, invites, sessions, cfg.Security, clock)
+	authSvc := auth.New(db, tenants, invites, sessions, cfg.Security, clock)
 	dedup := pipeline.NewDedup(dedupRepo, clock)
 	ingest := pipeline.NewIngestor(outbox, dedup, clock)
 

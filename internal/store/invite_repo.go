@@ -78,6 +78,17 @@ func (r *InviteRepo) Consume(ctx context.Context, code string, tenantID int64) e
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := r.ConsumeTx(ctx, tx, code, tenantID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ConsumeTx is the explicit-transaction variant of Consume. The caller
+// owns the *sql.Tx; on success the invite row is marked used inside
+// that tx without an inner commit. Used by auth.Register to atomically
+// claim the invite alongside tenant + session inserts.
+func (r *InviteRepo) ConsumeTx(ctx context.Context, tx *sql.Tx, code string, tenantID int64) error {
 	inv, err := lockTx(ctx, tx, code)
 	if err != nil {
 		return err
@@ -95,7 +106,7 @@ func (r *InviteRepo) Consume(ctx context.Context, code string, tenantID int64) e
 		tenantID, nowMs, code); err != nil {
 		return fmt.Errorf("update invite: %w", err)
 	}
-	return tx.Commit()
+	return nil
 }
 
 // ListByCreator returns invites issued by a given admin tenant.

@@ -128,7 +128,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	}
 
 	// ── 5. Services.
-	authSvc := auth.New(tenants, invites, sessions, cfg.Security, clock)
+	authSvc := auth.New(db, tenants, invites, sessions, cfg.Security, clock)
 	dedup := pipeline.NewDedup(dedupRepo, clock)
 	ingest := pipeline.NewIngestor(outbox, dedup, clock)
 

@@ -24,6 +24,13 @@ func NewSessionRepo(db *sql.DB, clock domain.Clock) *SessionRepo {
 // Insert writes a new session row. The session ID must be pre-generated
 // by the caller (auth service controls entropy).
 func (r *SessionRepo) Insert(ctx context.Context, s *domain.Session) error {
+	return r.InsertTx(ctx, r.db, s)
+}
+
+// InsertTx is the explicit-transaction variant of Insert. Lets
+// auth.Register share a single *sql.Tx with the tenant + invite
+// consume so all three writes commit atomically.
+func (r *SessionRepo) InsertTx(ctx context.Context, tx txExec, s *domain.Session) error {
 	if s == nil || s.ID == "" {
 		return fmt.Errorf("%w: session id is empty", domain.ErrValidation)
 	}
@@ -35,7 +42,7 @@ func (r *SessionRepo) Insert(ctx context.Context, s *domain.Session) error {
 	}
 	createdMs := nowMs(r.clock)
 	s.CreatedAt = toTime(createdMs)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions (id, tenant_id, expires_at, created_at)
 		VALUES (?, ?, ?, ?)`,
 		s.ID, s.TenantID, s.ExpiresAt.UnixMilli(), createdMs)
