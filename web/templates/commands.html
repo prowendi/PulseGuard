@@ -1,0 +1,92 @@
+{{ define "commands-page" }}{{ template "layout-open" . }}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+  <div class="bg-white rounded-lg shadow border border-slate-200 p-6 lg:col-span-2">
+    <h2 class="text-base font-semibold text-slate-900 mb-1">新建命令</h2>
+    <p class="text-xs text-slate-500 mb-4">在 Telegram 私聊里给 bot 发送 <code class="text-xs px-1 bg-slate-100 rounded">/&lt;name&gt; [args...]</code> 即触发本脚本，结果回传给用户。</p>
+    <form method="POST" action="/ui/commands" class="space-y-3">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">命令名（不含 / 前缀）</label>
+          <input type="text" name="name" required maxlength="64" placeholder="查询" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">描述</label>
+          <input type="text" name="description" maxlength="200" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">Starlark 代码（必须定义 <code class="px-1 bg-slate-100 rounded">handle(args)</code> 函数）</label>
+        <textarea id="command-code" name="code" required rows="10" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="def handle(args):&#10;    return &quot;hello, &quot; + &quot; &quot;.join(args)"></textarea>
+      </div>
+      <label class="flex items-center gap-2 text-sm text-slate-700">
+        <input type="checkbox" name="enabled" value="1" checked class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"> 启用
+      </label>
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">创建</button>
+    </form>
+  </div>
+
+  <div class="bg-white rounded-lg shadow border border-slate-200 p-6">
+    <h2 class="text-base font-semibold text-slate-900 mb-1">Demo 范例</h2>
+    <p class="text-xs text-slate-500 mb-4">点击"复制到编辑器"快速上手。</p>
+    <div class="space-y-3">
+      {{ range .Demos }}
+      <div class="border border-slate-200 rounded-md p-3 bg-slate-50">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-sm font-semibold text-slate-800">{{ .Title }}</span>
+          <button type="button" class="text-xs text-blue-600 hover:text-blue-800" onclick="document.getElementById('command-code').value = {{ .Code | js }};">复制到编辑器</button>
+        </div>
+        <p class="text-xs text-slate-600 mb-2">{{ .Description }}</p>
+        <pre class="text-[11px] font-mono text-slate-700 whitespace-pre-wrap">{{ .Code }}</pre>
+      </div>
+      {{ end }}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-lg shadow border border-slate-200 overflow-hidden">
+  <div class="px-6 py-4 border-b border-slate-200">
+    <h2 class="text-base font-semibold text-slate-900">已配置命令</h2>
+    <p class="text-xs text-slate-500 mt-0.5">共 {{ len .Commands }} 个</p>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">ID</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">命令</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">描述</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">状态</th>
+          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">更新时间</th>
+          <th class="px-3 py-2 text-right font-medium text-slate-500 uppercase tracking-wider text-xs">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {{ range .Commands }}
+        <tr class="even:bg-slate-50/40">
+          <td class="px-3 py-2 font-mono text-xs text-slate-500">{{ .ID }}</td>
+          <td class="px-3 py-2 font-mono text-slate-900">/{{ .Name }}</td>
+          <td class="px-3 py-2 text-slate-600">{{ .Description }}</td>
+          <td class="px-3 py-2">
+            {{ if .Enabled }}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">启用</span>
+            {{ else }}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-600">禁用</span>{{ end }}
+          </td>
+          <td class="px-3 py-2 text-slate-500 font-mono text-xs">{{ .UpdatedAt }}</td>
+          <td class="px-3 py-2 text-right whitespace-nowrap">
+            <form method="POST" action="/ui/commands/{{ .ID }}/toggle" class="inline">
+              <input type="hidden" name="csrf" value="{{ $.CSRF }}">
+              <button type="submit" class="text-xs text-slate-600 hover:text-slate-900">{{ if .Enabled }}禁用{{ else }}启用{{ end }}</button>
+            </form>
+            <form method="POST" action="/ui/commands/{{ .ID }}/delete" class="inline ml-2" onsubmit="return confirm('确认删除命令 /{{ .Name }} ?');">
+              <input type="hidden" name="csrf" value="{{ $.CSRF }}">
+              <button type="submit" class="text-xs text-red-600 hover:text-red-800">删除</button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+        {{ if not .Commands }}<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400 text-sm">还没有命令，从右上角范例开始</td></tr>{{ end }}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{ template "layout-close" . }}{{ end }}
