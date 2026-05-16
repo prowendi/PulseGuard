@@ -88,12 +88,18 @@ func TestMigrate_Idempotent(t *testing.T) {
 		t.Fatalf("second Migrate: %v", err)
 	}
 
+	// The migrations directory grows over time; assert the on-disk count
+	// equals whatever migrations/*.sql ships in the binary, so this test
+	// keeps tracking the canonical "applied == bundled" invariant without
+	// being hard-coded to a specific version count.
+	wantVersions := countBundledMigrations(t)
+
 	var versions int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&versions); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if versions != 1 {
-		t.Fatalf("schema_migrations rows = %d want 1", versions)
+	if versions != wantVersions {
+		t.Fatalf("schema_migrations rows = %d want %d (matching bundled migrations)", versions, wantVersions)
 	}
 }
 
@@ -104,18 +110,36 @@ func TestMigrate_RecordsVersion(t *testing.T) {
 	if err := Migrate(ctx, db, clk); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	var v int
+	// applied_at on the very first migration must equal the FakeClock now.
 	var appliedAt int64
-	if err := db.QueryRow(`SELECT version, applied_at FROM schema_migrations`).Scan(&v, &appliedAt); err != nil {
+	if err := db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&appliedAt); err != nil {
 		t.Fatalf("select migration row: %v", err)
-	}
-	if v != 1 {
-		t.Fatalf("version = %d want 1", v)
 	}
 	wantMs := clk.Now().UnixMilli()
 	if appliedAt != wantMs {
 		t.Fatalf("applied_at = %d want %d (FakeClock = %s)", appliedAt, wantMs, clk.Now())
 	}
+}
+
+// countBundledMigrations reads the embedded migrations/ directory and
+// returns the number of *.sql files shipping in the binary. Used so
+// migration-count assertions stay in sync with the migration pack.
+func countBundledMigrations(t *testing.T) int {
+	t.Helper()
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("read migrations dir: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if filepath.Ext(e.Name()) == ".sql" {
+			n++
+		}
+	}
+	return n
 }
 
 func readTables(t *testing.T, db *sql.DB) []string {

@@ -27,13 +27,16 @@ type InviteRepo interface {
 }
 
 // BotRepo manages tenant-owned bot rows. Implementations encrypt/decrypt
-// BotToken transparently.
+// BotToken transparently. ListAll is intentionally tenant-blind — only
+// runtime wire-up (startup listener boot) and admin tooling should call
+// it. All other surfaces MUST scope to a specific tenantID.
 type BotRepo interface {
 	Insert(ctx context.Context, b *Bot) error
 	Update(ctx context.Context, b *Bot) error
 	Delete(ctx context.Context, tenantID, id int64) error
 	GetByID(ctx context.Context, tenantID, id int64) (*Bot, error)
 	ListByTenant(ctx context.Context, tenantID int64) ([]*Bot, error)
+	ListAll(ctx context.Context) ([]*Bot, error)
 }
 
 // TemplateRepo manages tenant message templates.

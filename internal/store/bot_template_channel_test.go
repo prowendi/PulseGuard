@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wendi/pulseguard/internal/config"
 	"github.com/wendi/pulseguard/internal/domain"
 )
 
@@ -183,6 +185,145 @@ func TestBotRepo_UniqueNameWithinTenant(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("duplicate name should fail")
+	}
+}
+
+func TestBotRepo_PlatformDefaultTelegram(t *testing.T) {
+	f := newResourceFixture(t)
+	// Insert with empty Platform should be back-filled to "telegram".
+	b := &domain.Bot{TenantID: f.tenant.ID, Name: "default-plat", BotToken: "1:t"}
+	if err := f.bots.Insert(context.Background(), b); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if b.Platform != domain.PlatformTelegram {
+		t.Fatalf("Platform after insert = %q want telegram", b.Platform)
+	}
+	got, err := f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Platform != domain.PlatformTelegram {
+		t.Fatalf("roundtrip Platform = %q want telegram", got.Platform)
+	}
+}
+
+func TestBotRepo_PlatformExplicitRoundtrip(t *testing.T) {
+	f := newResourceFixture(t)
+	b := &domain.Bot{
+		TenantID: f.tenant.ID, Name: "explicit", BotToken: "1:t",
+		Platform: domain.PlatformTelegram,
+	}
+	if err := f.bots.Insert(context.Background(), b); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	got, err := f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Platform != domain.PlatformTelegram {
+		t.Fatalf("Platform = %q want telegram", got.Platform)
+	}
+}
+
+func TestBotRepo_PlatformRejectsUnknown(t *testing.T) {
+	f := newResourceFixture(t)
+	b := &domain.Bot{
+		TenantID: f.tenant.ID, Name: "bad", BotToken: "1:t",
+		Platform: "discord",
+	}
+	err := f.bots.Insert(context.Background(), b)
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("Insert unknown platform err = %v want ErrValidation", err)
+	}
+}
+
+func TestBotRepo_Migrate0002BackfillsExistingRows(t *testing.T) {
+	// Simulate a database that only has migration 0001 applied (an
+	// "older" install), insert a bot via raw SQL with no platform column
+	// awareness, then run Migrate which should add the column with a
+	// "telegram" default — leaving the existing row's platform = "telegram".
+	dir := t.TempDir()
+	dbPath := dir + "/legacy.db"
+	db, err := Open(config.Database{Path: dbPath, BusyTimeout: config.Duration(5 * time.Second)})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)}
+
+	// Apply only migration 0001 by sub-FS-ing the embedded migrations dir
+	// and running the v1 file directly.
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("fs.Sub: %v", err)
+	}
+	v1Body, err := fs.ReadFile(sub, "0001_init.sql")
+	if err != nil {
+		t.Fatalf("read v1: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("create schema_migrations: %v", err)
+	}
+	if _, err := db.Exec(string(v1Body)); err != nil {
+		t.Fatalf("apply 0001: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)`, clk.Now().UnixMilli()); err != nil {
+		t.Fatalf("record 0001: %v", err)
+	}
+
+	// Seed a tenant + a bot row through raw SQL (no platform column yet).
+	if _, err := db.Exec(`INSERT INTO tenants(email, password_hash, role, status, created_at, updated_at)
+		VALUES('legacy@x.com','x','user','active',?,?)`, clk.Now().UnixMilli(), clk.Now().UnixMilli()); err != nil {
+		t.Fatalf("insert tenant: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO bots(tenant_id, name, bot_token_enc, description, created_at, updated_at)
+		VALUES(1,'legacy-bot',?,'legacy',?,?)`, []byte{0x00, 0x01, 0x02}, clk.Now().UnixMilli(), clk.Now().UnixMilli()); err != nil {
+		t.Fatalf("insert legacy bot: %v", err)
+	}
+
+	// Now apply remaining migrations (0002 adds platform with default 'telegram').
+	if err := Migrate(context.Background(), db, clk); err != nil {
+		t.Fatalf("Migrate to head: %v", err)
+	}
+
+	var platform string
+	if err := db.QueryRow(`SELECT platform FROM bots WHERE name='legacy-bot'`).Scan(&platform); err != nil {
+		t.Fatalf("read platform: %v", err)
+	}
+	if platform != domain.PlatformTelegram {
+		t.Fatalf("legacy row platform = %q want telegram", platform)
+	}
+}
+
+func TestBotRepo_ListAllAcrossTenants(t *testing.T) {
+	f := newResourceFixture(t)
+	// Seed a second tenant + bots, then assert ListAll returns rows from
+	// both. Names must stay unique only within (tenant, name) so the
+	// second bot reuses "alpha".
+	t2 := makeTenant("second@x.com")
+	if err := f.tenants.Insert(context.Background(), t2); err != nil {
+		t.Fatalf("insert second tenant: %v", err)
+	}
+	b1 := f.makeBot(t, "alpha", "1:t")
+	b2 := &domain.Bot{TenantID: t2.ID, Name: "alpha", BotToken: "2:t"}
+	if err := f.bots.Insert(context.Background(), b2); err != nil {
+		t.Fatalf("insert tenant-2 bot: %v", err)
+	}
+	all, err := f.bots.ListAll(context.Background())
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListAll len = %d want 2", len(all))
+	}
+	// Tokens decrypted and platform back-filled.
+	seen := map[int64]string{}
+	for _, b := range all {
+		seen[b.ID] = b.Platform
+	}
+	if seen[b1.ID] != domain.PlatformTelegram || seen[b2.ID] != domain.PlatformTelegram {
+		t.Fatalf("platform map = %+v", seen)
 	}
 }
 

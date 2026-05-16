@@ -163,6 +163,14 @@ func (r *fakeBotRepo) GetByID(ctx context.Context, tenantID, id int64) (*domain.
 	cp := *b
 	return &cp, nil
 }
+func (r *fakeBotRepo) ListAll(ctx context.Context) ([]*domain.Bot, error) {
+	out := make([]*domain.Bot, 0, len(r.m))
+	for _, b := range r.m {
+		cp := *b
+		out = append(out, &cp)
+	}
+	return out, nil
+}
 
 type fakeTplRepo struct{ m map[int64]*domain.Template }
 
