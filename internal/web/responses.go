@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	chimid "github.com/go-chi/chi/v5/middleware"
 )
 
 // apiError is the canonical JSON error envelope (spec §5.3).
@@ -30,15 +32,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // writeError emits the canonical { "error": { code, message, request_id } }
-// envelope. The request id is harvested from the chi RequestID middleware
-// (header X-Request-Id), allowing clients to correlate with logs.
+// envelope. The request id is harvested from chi's RequestID context
+// (chimid.GetReqID) so operators can correlate with the access log
+// emitted by middleware.Logger.
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
-	// chi.RequestID sets the X-Request-Id header on the response writer;
-	// some clients echo it back in their request, so check both. Prefer
-	// the response header since chi sets it first.
-	rid := w.Header().Get("X-Request-Id")
+	rid := chimid.GetReqID(r.Context())
 	if rid == "" {
+		// Fallback paths: a client-supplied request id, then any other
+		// middleware that already pinned the header.
 		rid = r.Header.Get("X-Request-Id")
+		if rid == "" {
+			rid = w.Header().Get("X-Request-Id")
+		}
 	}
 	writeJSON(w, status, apiError{Error: apiErrorBody{Code: code, Message: msg, RequestID: rid}})
 }
