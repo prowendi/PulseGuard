@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -396,3 +397,173 @@ def handle(args):
 		t.Fatalf("body length = %s, want %d (1 MiB fallback)", res.Return, oneMiB)
 	}
 }
+
+// ─── DNS rebinding TOCTOU — pinned DialContext closes the window ──────
+//
+// The threat model is the classic DNS rebinding attack: an attacker
+// controls the authoritative DNS for `evil.example`. They serve a
+// public answer (8.8.8.8) on the first resolution so CheckURL passes,
+// then swap the A record to an internal address (e.g. 169.254.169.254
+// or 127.0.0.1) before the transport performs its own DNS lookup. The
+// classic stdlib http.Client.Do would re-resolve the host and connect
+// to the attacker-chosen internal IP, exposing internal services.
+//
+// PulseGuard closes the window by giving each request a one-shot
+// transport whose DialContext is pinned to the IP CheckURL just
+// validated. The transport never consults DNS again — even if the
+// attacker's resolver flips A records mid-flight, the dial target
+// stays the IP that passed the SSRF check.
+//
+// These tests prove the property at two layers:
+//
+//  1. buildPinnedClient unit test — the transport's DialContext, when
+//     invoked with `evil.example:80`, dials a specific IP we control
+//     (not whatever the host name would resolve to at dial time).
+//  2. End-to-end test — a stubbed lookupIPs flips the A record between
+//     CheckURL and Do; httptest provides a server bound to the FIRST
+//     (validated) IP; the request still lands on the validated server.
+
+// TestPinnedDialContext_IgnoresHost is the unit-level evidence: feed
+// a pinned IP and the dialer always targets that IP, never the host
+// portion of `addr`. We listen on 127.0.0.1, pin to it, then ask the
+// dialer to connect to "evil.example:<port>". If the dialer respected
+// the hostname it would NXDOMAIN or hit an external IP; instead it
+// must reach the listener.
+func TestPinnedDialContext_IgnoresHost(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	pinned := net.ParseIP("127.0.0.1")
+	dial := newPinnedDialContext(pinned, "0", 2*time.Second)
+
+	// addr uses an unresolvable hostname; if DialContext honoured it
+	// rather than the pinned IP, this would fail with a DNS error.
+	conn, err := dial(context.Background(), "tcp",
+		net.JoinHostPort("nonexistent.invalid.example", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatalf("pinned dial: %v", err)
+	}
+	conn.Close()
+}
+
+// TestHTTP_DNSRebinding_DialUsesValidatedIP is the end-to-end proof
+// that the TOCTOU window is closed. lookupIPs is stubbed to return a
+// loopback address (the only one we can actually listen on inside the
+// test) for the first call — that's the validated IP. The httptest
+// server is bound to that loopback IP. We then mutate the stub so any
+// subsequent lookup of the same host would return 169.254.169.254
+// (the cloud metadata endpoint) — exactly the rebinding payload.
+//
+// If the transport re-queried DNS (the bug we're closing) it would
+// dial 169.254.169.254, time out or connection-refuse, and the script
+// would surface an error. Because the dialer is pinned to ips[0] from
+// CheckURL, it dials the loopback target and the request returns 200.
+//
+// The test runs with DenyPrivateNets=false because httptest binds to
+// 127.0.0.1; the rebinding payload itself is link-local, which the
+// guard would normally reject if the second resolution were honoured.
+func TestHTTP_DNSRebinding_DialUsesValidatedIP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("validated"))
+	}))
+	defer srv.Close()
+
+	// Parse the httptest URL so we know the port/IP it bound to.
+	hostPort := strings.TrimPrefix(srv.URL, "http://")
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		t.Fatalf("split server URL: %v", err)
+	}
+	validated := net.ParseIP(host)
+	if validated == nil {
+		t.Fatalf("expected IP literal in httptest URL, got %q", host)
+	}
+
+	// Two-call stub: first lookup returns the validated IP (so
+	// CheckURL passes for our "public" hostname); subsequent lookups
+	// would return the rebinding payload — but if the fix works the
+	// transport never asks.
+	var lookups int32
+	originalLookup := lookupIPs
+	defer func() { lookupIPs = originalLookup }()
+	lookupIPs = func(host string) ([]net.IP, error) {
+		if host == "rebind-toctou.example" {
+			n := atomic.AddInt32(&lookups, 1)
+			if n == 1 {
+				return []net.IP{validated}, nil
+			}
+			return []net.IP{net.ParseIP("169.254.169.254")}, nil
+		}
+		return originalLookup(host)
+	}
+
+	// allowPrivate=true so the loopback validated IP is reachable; the
+	// rebinding payload (169.254.169.254) would still be blocked by
+	// isBlockedIP if CheckURL ran a second time — but the dialer must
+	// not even reach that code path.
+	c := newTestHTTPClient(true)
+	e := &Executor{HTTP: c}
+
+	// We can't change the Host header that net/http sends without
+	// rewriting the URL, so we ask the script to fetch
+	// http://rebind-toctou.example:<port>/ — the hostname is what
+	// CheckURL+pinned-dial together must protect.
+	_, port, _ := net.SplitHostPort(hostPort)
+	url := "http://rebind-toctou.example:" + port + "/"
+	res, err := e.Execute(context.Background(), `
+def handle(args):
+    r = http.get(args[0])
+    return str(r["status"]) + ":" + r["body"]
+`, []string{url})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.HasPrefix(res.Return, "200:") || !strings.Contains(res.Return, "validated") {
+		t.Fatalf("Return = %q, want 200:validated (got rebinding-vulnerable answer?)", res.Return)
+	}
+
+	// Property assertion: only ONE DNS lookup happened — the one
+	// CheckURL performed. The transport must have used the pinned IP
+	// for the dial, never reissuing a lookup. If lookups > 1 the fix
+	// has regressed.
+	if got := atomic.LoadInt32(&lookups); got != 1 {
+		t.Fatalf("lookupIPs called %d times; pinned dial must do exactly 1 lookup (DNS rebinding window reopened)", got)
+	}
+}
+
+// TestBuildPinnedClient_TLSConfigPreservesHostname is the unit
+// evidence that the per-request *http.Client preserves the original
+// hostname for TLS SNI / cert verification while pinning the TCP
+// destination IP. The Host portion of the URL feeds ServerName so
+// the TLS handshake still validates against the public certificate;
+// only Dial is hijacked.
+func TestBuildPinnedClient_TLSConfigPreservesHostname(t *testing.T) {
+	u, _ := url.Parse("https://api.example.com/v1/whatever")
+	pinned := net.ParseIP("203.0.113.10")
+	base := &http.Client{Timeout: 7 * time.Second}
+
+	client := buildPinnedClient(base, u, pinned)
+	if client == nil {
+		t.Fatal("buildPinnedClient returned nil")
+	}
+	if client.Timeout != 7*time.Second {
+		t.Fatalf("timeout copy: got %s, want 7s", client.Timeout)
+	}
+	tr, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport type = %T, want *http.Transport", client.Transport)
+	}
+	if tr.TLSClientConfig == nil || tr.TLSClientConfig.ServerName != "api.example.com" {
+		t.Fatalf("TLS ServerName = %q, want api.example.com (cert validation must keep original host)",
+			tr.TLSClientConfig.ServerName)
+	}
+	if tr.DialContext == nil {
+		t.Fatal("DialContext must be set; otherwise dial falls back to stdlib DNS lookup")
+	}
+}
+
