@@ -30,7 +30,7 @@ func uiInviteList(deps Deps) http.HandlerFunc {
 
 func uiInviteCreate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}
@@ -62,7 +62,7 @@ func uiInviteCreate(deps Deps) http.HandlerFunc {
 
 func uiInviteDelete(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}

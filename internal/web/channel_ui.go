@@ -35,7 +35,7 @@ func uiChannelList(deps Deps) http.HandlerFunc {
 
 func uiChannelCreate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}
@@ -70,7 +70,7 @@ func uiChannelCreate(deps Deps) http.HandlerFunc {
 
 func uiChannelDelete(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}
@@ -86,7 +86,7 @@ func uiChannelDelete(deps Deps) http.HandlerFunc {
 
 func uiChannelRotate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}

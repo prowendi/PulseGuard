@@ -69,3 +69,19 @@ func (d *Deps) sessionTTL() time.Duration {
 	}
 	return d.Cfg.Security.SessionTTL.Std()
 }
+
+// csrfSecret returns the bytes used to HMAC-bind CSRF tokens to session
+// IDs. We reuse the master_key_b64 because it is already required to
+// boot and rotating it implicitly invalidates every outstanding CSRF
+// token (acceptable: the user just logs in again). When Cfg is nil
+// (httptest minimal harnesses) the empty byte slice is returned and the
+// HMAC degenerates to a constant — still constant-time compared, so
+// anonymous flows that never set a session_id pass cleanly.
+//
+// Refs: security-report S-M2.
+func (d *Deps) csrfSecret() []byte {
+	if d.Cfg == nil || d.Cfg.Security.MasterKeyB64 == "" {
+		return nil
+	}
+	return []byte(d.Cfg.Security.MasterKeyB64)
+}

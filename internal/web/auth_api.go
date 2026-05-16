@@ -67,7 +67,10 @@ func apiRegister(deps Deps) http.HandlerFunc {
 			return
 		}
 		setSessionCookie(w, sess, deps)
-		IssueCSRF(w, deps.cookieSecure())
+		// Bind the CSRF token to the freshly-minted session id directly;
+		// the ctx has no session attached on this code path (RequireAuth
+		// only runs on /api/v1/* authed routes, not on register).
+		IssueCSRF(w, sess.ID, deps.csrfSecret(), deps.cookieSecure())
 		writeJSON(w, http.StatusCreated, authResp{
 			Tenant:           toTenantView(tenant),
 			SessionExpiresAt: sess.ExpiresAt,
@@ -95,7 +98,7 @@ func apiLogin(deps Deps) http.HandlerFunc {
 			return
 		}
 		setSessionCookie(w, sess, deps)
-		IssueCSRF(w, deps.cookieSecure())
+		IssueCSRF(w, sess.ID, deps.csrfSecret(), deps.cookieSecure())
 		writeJSON(w, http.StatusOK, authResp{
 			Tenant:           toTenantView(tenant),
 			SessionExpiresAt: sess.ExpiresAt,
@@ -105,7 +108,7 @@ func apiLogin(deps Deps) http.HandlerFunc {
 
 func apiLogout(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			writeError(w, r, http.StatusForbidden, "FORBIDDEN", "csrf required")
 			return
 		}

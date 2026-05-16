@@ -19,7 +19,7 @@ func uiLoginGet(deps Deps) http.HandlerFunc {
 			http.Redirect(w, r, "/ui/dashboard", http.StatusSeeOther)
 			return
 		}
-		tok := IssueCSRF(w, deps.cookieSecure())
+		tok := IssueCSRF(w, sessionIDFromRequest(r), deps.csrfSecret(), deps.cookieSecure())
 		_ = Render(w, http.StatusOK, "login-page", pageData{
 			Title: "登录",
 			CSRF:  tok,
@@ -32,8 +32,8 @@ func uiLoginGet(deps Deps) http.HandlerFunc {
 // login form with an error flash.
 func uiLoginPost(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
-			renderAuthFlash(w, deps, "login-page", "登录", "CSRF token mismatch")
+		if !VerifyCSRF(r, deps.csrfSecret()) {
+			renderAuthFlash(w, r, deps, "login-page", "登录", "CSRF token mismatch")
 			return
 		}
 		_ = r.ParseForm()
@@ -41,11 +41,13 @@ func uiLoginPost(deps Deps) http.HandlerFunc {
 		password := r.PostForm.Get("password")
 		sess, err := deps.Auth.Login(r.Context(), email, password)
 		if err != nil {
-			renderAuthFlash(w, deps, "login-page", "登录", authFlashMessage(err))
+			renderAuthFlash(w, r, deps, "login-page", "登录", authFlashMessage(err))
 			return
 		}
 		setSessionCookie(w, sess, deps)
-		IssueCSRF(w, deps.cookieSecure())
+		// Bind CSRF token to the new session id directly (ctx still
+		// holds the pre-login "" session id).
+		IssueCSRF(w, sess.ID, deps.csrfSecret(), deps.cookieSecure())
 		http.Redirect(w, r, "/ui/dashboard", http.StatusSeeOther)
 	}
 }
@@ -56,7 +58,7 @@ func uiRegisterGet(deps Deps) http.HandlerFunc {
 			http.Redirect(w, r, "/ui/dashboard", http.StatusSeeOther)
 			return
 		}
-		tok := IssueCSRF(w, deps.cookieSecure())
+		tok := IssueCSRF(w, sessionIDFromRequest(r), deps.csrfSecret(), deps.cookieSecure())
 		_ = Render(w, http.StatusOK, "register-page", pageData{
 			Title: "注册",
 			CSRF:  tok,
@@ -66,8 +68,8 @@ func uiRegisterGet(deps Deps) http.HandlerFunc {
 
 func uiRegisterPost(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
-			renderAuthFlash(w, deps, "register-page", "注册", "CSRF token mismatch")
+		if !VerifyCSRF(r, deps.csrfSecret()) {
+			renderAuthFlash(w, r, deps, "register-page", "注册", "CSRF token mismatch")
 			return
 		}
 		_ = r.ParseForm()
@@ -76,18 +78,18 @@ func uiRegisterPost(deps Deps) http.HandlerFunc {
 		invite := strings.TrimSpace(r.PostForm.Get("invite_code"))
 		_, sess, err := deps.Auth.Register(r.Context(), email, password, invite)
 		if err != nil {
-			renderAuthFlash(w, deps, "register-page", "注册", authFlashMessage(err))
+			renderAuthFlash(w, r, deps, "register-page", "注册", authFlashMessage(err))
 			return
 		}
 		setSessionCookie(w, sess, deps)
-		IssueCSRF(w, deps.cookieSecure())
+		IssueCSRF(w, sess.ID, deps.csrfSecret(), deps.cookieSecure())
 		http.Redirect(w, r, "/ui/dashboard", http.StatusSeeOther)
 	}
 }
 
 func uiLogoutPost(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Redirect(w, r, "/ui/dashboard", http.StatusSeeOther)
 			return
 		}
@@ -124,8 +126,8 @@ func rootRedirect(_ Deps) http.HandlerFunc {
 
 // renderAuthFlash re-renders an unauthenticated form page with an error
 // flash + a freshly issued CSRF token.
-func renderAuthFlash(w http.ResponseWriter, deps Deps, page, title, msg string) {
-	tok := IssueCSRF(w, deps.cookieSecure())
+func renderAuthFlash(w http.ResponseWriter, r *http.Request, deps Deps, page, title, msg string) {
+	tok := IssueCSRF(w, sessionIDFromRequest(r), deps.csrfSecret(), deps.cookieSecure())
 	_ = Render(w, http.StatusUnauthorized, page, pageData{
 		Title: title,
 		CSRF:  tok,

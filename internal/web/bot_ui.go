@@ -48,7 +48,7 @@ func uiBotList(deps Deps) http.HandlerFunc {
 
 func uiBotCreate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}
@@ -74,7 +74,7 @@ func uiBotCreate(deps Deps) http.HandlerFunc {
 
 func uiBotDelete(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}

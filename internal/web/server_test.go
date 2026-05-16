@@ -1,13 +1,17 @@
 package web
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/wendi/pulseguard/internal/config"
+	"github.com/wendi/pulseguard/internal/domain"
+	wmw "github.com/wendi/pulseguard/internal/web/middleware"
 )
 
 // TestServerHealthz boots NewServer with a minimal Deps bundle and
@@ -58,10 +62,14 @@ func TestServerStaticAsset(t *testing.T) {
 }
 
 // TestCSRFTokensRoundTrip verifies that IssueCSRF emits a cookie which
-// VerifyCSRF accepts only when the header matches.
+// VerifyCSRF accepts only when the header matches AND the HMAC binding
+// to the session id remains intact.
 func TestCSRFTokensRoundTrip(t *testing.T) {
+	secret := []byte("super-secret-key-bytes-32-long_!")
+	const sid = "sess-123"
+
 	rec := httptest.NewRecorder()
-	tok := IssueCSRF(rec, false)
+	tok := IssueCSRF(rec, sid, secret, false)
 	if tok == "" {
 		t.Fatal("IssueCSRF returned empty token")
 	}
@@ -73,39 +81,114 @@ func TestCSRFTokensRoundTrip(t *testing.T) {
 		t.Fatalf("cookie mismatch: %+v vs %q", cookie, tok)
 	}
 
+	// We need a request whose context carries the same session id so
+	// VerifyCSRF can rebuild the HMAC.
+	withSess := func(r *http.Request) *http.Request {
+		ctx := wmw.WithSession(r.Context(), &domain.Session{ID: sid})
+		return r.WithContext(ctx)
+	}
+
 	// Header matches → verify true.
-	r := httptest.NewRequest(http.MethodPost, "/x", nil)
+	r := withSess(httptest.NewRequest(http.MethodPost, "/x", nil))
 	r.AddCookie(&http.Cookie{Name: CookieCSRF, Value: tok})
 	r.Header.Set(HeaderCSRF, tok)
-	if !VerifyCSRF(r) {
-		t.Fatal("VerifyCSRF should accept matching header")
+	if !VerifyCSRF(r, secret) {
+		t.Fatal("VerifyCSRF should accept matching header bound to session")
 	}
 
 	// Header missing → verify false.
-	r2 := httptest.NewRequest(http.MethodPost, "/x", nil)
+	r2 := withSess(httptest.NewRequest(http.MethodPost, "/x", nil))
 	r2.AddCookie(&http.Cookie{Name: CookieCSRF, Value: tok})
-	if VerifyCSRF(r2) {
+	if VerifyCSRF(r2, secret) {
 		t.Fatal("VerifyCSRF should reject missing header")
 	}
 
 	// Header tampered → verify false.
-	r3 := httptest.NewRequest(http.MethodPost, "/x", nil)
+	r3 := withSess(httptest.NewRequest(http.MethodPost, "/x", nil))
 	r3.AddCookie(&http.Cookie{Name: CookieCSRF, Value: tok})
 	r3.Header.Set(HeaderCSRF, tok+"x")
-	if VerifyCSRF(r3) {
+	if VerifyCSRF(r3, secret) {
 		t.Fatal("VerifyCSRF should reject tampered header")
 	}
 
+	// Cookie HMAC for a DIFFERENT session must NOT verify under our
+	// session id — defends against cookie-injection via a sibling
+	// subdomain (security-report S-M2).
+	otherRec := httptest.NewRecorder()
+	otherTok := IssueCSRF(otherRec, "sess-OTHER", secret, false)
+	r4 := withSess(httptest.NewRequest(http.MethodPost, "/x", nil))
+	r4.AddCookie(&http.Cookie{Name: CookieCSRF, Value: otherTok})
+	r4.Header.Set(HeaderCSRF, otherTok)
+	if VerifyCSRF(r4, secret) {
+		t.Fatal("VerifyCSRF must reject token bound to a different session")
+	}
+
 	// Safe method → always allowed.
-	rg := httptest.NewRequest(http.MethodGet, "/x", nil)
-	if !VerifyCSRF(rg) {
+	rg := withSess(httptest.NewRequest(http.MethodGet, "/x", nil))
+	if !VerifyCSRF(rg, secret) {
 		t.Fatal("VerifyCSRF should allow GET")
 	}
 }
 
-// TestSecureHeadersOnEveryResponse asserts the defensive header set
-// installed by R6 / S-M1 fires on every response (probed via /healthz)
-// and that HSTS toggles with the cookie_secure flag.
+// TestEnsureCSRFCookieAutoIssuesOnFirstAuthedRequest is the regression
+// guard for code-review-report C-I4: a user that already holds a valid
+// session cookie but lacks the psg_csrf cookie (e.g. cleared by the
+// browser, or first navigation after upgrade) must NOT get a 403 from
+// CSRFCheck — the EnsureCSRFCookie middleware should issue one before
+// CSRFCheck runs. Because the auto-issuer only attaches the cookie to
+// the response and CSRFCheck reads from the request, the FIRST POST
+// against an authed endpoint will still 403; subsequent ones succeed.
+// What we assert here: a GET against /api/v1/me without a csrf cookie
+// returns 200 AND attaches a fresh psg_csrf cookie in Set-Cookie.
+func TestEnsureCSRFCookieAutoIssuesOnFirstAuthedRequest(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INVITE-OK")
+
+	// Register to obtain a session, then strip the csrf cookie from the
+	// jar to simulate a stale browser state.
+	c := h.newJarClient()
+	regBody := mustJSON(t, map[string]any{
+		"email":       "alice@example.com",
+		"password":    "alicepass",
+		"invite_code": "INVITE-OK",
+	})
+	resp, err := c.Post(h.fullURL("/api/v1/auth/register"), "application/json",
+		bytes.NewReader(regBody))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	resp.Body.Close()
+
+	// Drop the csrf cookie by walking the jar and rewriting it to expire.
+	clearJarCookie(t, c, h.server.URL, CookieCSRF)
+	if v := jarValue(t, c, h.server.URL, CookieCSRF); v != "" {
+		t.Fatalf("csrf cookie should be cleared, still %q", v)
+	}
+
+	// Issue a GET — RequireAuth resolves the session, EnsureCSRFCookie
+	// detects the missing cookie and writes a fresh one.
+	getReq, _ := http.NewRequest(http.MethodGet, h.fullURL("/api/v1/me"), nil)
+	resp, err = c.Do(getReq)
+	if err != nil {
+		t.Fatalf("me: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("me status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	if v := jarValue(t, c, h.server.URL, CookieCSRF); v == "" {
+		t.Fatalf("EnsureCSRFCookie did not auto-issue psg_csrf")
+	}
+}
+
+// clearJarCookie expires the named cookie in the jar attached to base.
+func clearJarCookie(t *testing.T, c *http.Client, base, name string) {
+	t.Helper()
+	u, _ := url.Parse(base)
+	expired := &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1}
+	c.Jar.SetCookies(u, []*http.Cookie{expired})
+}
 func TestSecureHeadersOnEveryResponse(t *testing.T) {
 	cases := []struct {
 		name       string

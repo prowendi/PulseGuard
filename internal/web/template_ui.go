@@ -30,7 +30,7 @@ func uiTemplateList(deps Deps) http.HandlerFunc {
 
 func uiTemplateCreate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}
@@ -64,7 +64,7 @@ func uiTemplateCreate(deps Deps) http.HandlerFunc {
 
 func uiTemplateDelete(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !VerifyCSRF(r) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}

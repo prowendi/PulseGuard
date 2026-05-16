@@ -21,6 +21,7 @@ func mountPushAPI(r chi.Router, deps Deps) {
 func mountAuthedAPI(r chi.Router, deps Deps) {
 	r.Group(func(sec chi.Router) {
 		sec.Use(wmw.RequireAuth(deps.Auth))
+		sec.Use(EnsureCSRFCookie(deps))
 		sec.Use(wmw.CSRFCheck())
 		sec.Get("/me", apiMe(deps))
 		sec.Post("/auth/logout", apiLogout(deps))
@@ -46,6 +47,7 @@ func mountAuthUI(r chi.Router, deps Deps) {
 func mountAuthedUI(r chi.Router, deps Deps) {
 	r.Group(func(sec chi.Router) {
 		sec.Use(wmw.RequireAuth(deps.Auth))
+		sec.Use(EnsureCSRFCookie(deps))
 		sec.Get("/dashboard", uiDashboard(deps))
 		sec.Post("/logout", uiLogoutPost(deps))
 		installBotsUIRoutes(sec, deps)
