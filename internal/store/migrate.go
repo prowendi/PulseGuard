@@ -8,20 +8,27 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
-	"time"
+
+	"github.com/wendi/pulseguard/internal/domain"
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
 // Migrate applies every migrations/NNNN_*.sql script not yet recorded in
-// the schema_migrations table. Calls are idempotent.
-func Migrate(ctx context.Context, db *sql.DB) error {
-	return MigrateFS(ctx, db, migrationsFS, "migrations")
+// the schema_migrations table. Calls are idempotent. The supplied clock
+// stamps applied_at on each new migration so tests can replay migrations
+// against a deterministic FakeClock and so the project's "all timestamps
+// flow through domain.Clock" invariant is preserved (spec §6).
+func Migrate(ctx context.Context, db *sql.DB, clock domain.Clock) error {
+	return MigrateFS(ctx, db, migrationsFS, "migrations", clock)
 }
 
 // MigrateFS allows tests to substitute a custom embed.FS or sub-FS.
-func MigrateFS(ctx context.Context, db *sql.DB, src fs.FS, dir string) error {
+func MigrateFS(ctx context.Context, db *sql.DB, src fs.FS, dir string, clock domain.Clock) error {
+	if clock == nil {
+		clock = domain.RealClock()
+	}
 	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 		  version    INTEGER PRIMARY KEY,
@@ -48,7 +55,7 @@ func MigrateFS(ctx context.Context, db *sql.DB, src fs.FS, dir string) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", f.name, err)
 		}
-		if err := runMigration(ctx, db, f.version, string(body)); err != nil {
+		if err := runMigration(ctx, db, clock, f.version, string(body)); err != nil {
 			return fmt.Errorf("migration %d (%s): %w", f.version, f.name, err)
 		}
 	}
@@ -110,7 +117,7 @@ func parseVersion(name string) (int, error) {
 	return v, nil
 }
 
-func runMigration(ctx context.Context, db *sql.DB, version int, body string) error {
+func runMigration(ctx context.Context, db *sql.DB, clock domain.Clock, version int, body string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -121,7 +128,7 @@ func runMigration(ctx context.Context, db *sql.DB, version int, body string) err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`,
-		version, time.Now().UnixMilli()); err != nil {
+		version, clock.Now().UnixMilli()); err != nil {
 		return fmt.Errorf("record migration: %w", err)
 	}
 	return tx.Commit()

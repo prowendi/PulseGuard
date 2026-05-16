@@ -57,10 +57,10 @@ func seedFullStack(t *testing.T, dbPath string, dedupWindow int) (*domain.Channe
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := store.Migrate(context.Background(), db); err != nil {
+	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
+	if err := store.Migrate(context.Background(), db, clk); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
 	cipher, err := store.NewCipher("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	if err != nil {
 		t.Fatalf("cipher: %v", err)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wendi/pulseguard/internal/config"
+	"github.com/wendi/pulseguard/internal/domain"
 )
 
 // openTestDB opens a temp-file SQLite DB. We avoid :memory: because
@@ -49,7 +50,7 @@ func TestOpen_AppliesPragmas(t *testing.T) {
 func TestMigrate_AllTablesPresent(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	if err := Migrate(ctx, db); err != nil {
+	if err := Migrate(ctx, db, nil); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -80,10 +81,10 @@ func TestMigrate_AllTablesPresent(t *testing.T) {
 func TestMigrate_Idempotent(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	if err := Migrate(ctx, db); err != nil {
+	if err := Migrate(ctx, db, nil); err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
-	if err := Migrate(ctx, db); err != nil {
+	if err := Migrate(ctx, db, nil); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
 
@@ -99,7 +100,8 @@ func TestMigrate_Idempotent(t *testing.T) {
 func TestMigrate_RecordsVersion(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	if err := Migrate(ctx, db); err != nil {
+	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
+	if err := Migrate(ctx, db, clk); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	var v int
@@ -110,8 +112,9 @@ func TestMigrate_RecordsVersion(t *testing.T) {
 	if v != 1 {
 		t.Fatalf("version = %d want 1", v)
 	}
-	if appliedAt <= 0 {
-		t.Fatalf("applied_at = %d want >0", appliedAt)
+	wantMs := clk.Now().UnixMilli()
+	if appliedAt != wantMs {
+		t.Fatalf("applied_at = %d want %d (FakeClock = %s)", appliedAt, wantMs, clk.Now())
 	}
 }
 

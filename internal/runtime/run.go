@@ -81,7 +81,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	}
 	defer closeDB(db, logger)
 
-	if err := store.Migrate(ctx, db); err != nil {
+	if err := store.Migrate(ctx, db, clock); err != nil {
 		return fmt.Errorf("runtime: migrate: %w", err)
 	}
 

@@ -45,12 +45,11 @@ func newTestHarness(t *testing.T) *testHarness {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	if err := store.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-
 	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	clock := &domain.FakeClock{T: now}
+	if err := store.Migrate(context.Background(), db, clock); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
 
 	// 32-byte key (all zeros is fine for tests; only need GCM to function).
 	key := make([]byte, 32)

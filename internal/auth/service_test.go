@@ -31,10 +31,10 @@ func newFixture(t *testing.T) *testFixture {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := store.Migrate(context.Background(), db); err != nil {
+	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
+	if err := store.Migrate(context.Background(), db, clk); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
 	tenants := store.NewTenantRepo(db, clk)
 	invites := store.NewInviteRepo(db, clk)
 	sessions := store.NewSessionRepo(db, clk)

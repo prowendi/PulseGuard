@@ -21,7 +21,7 @@ func newMigratedDB(t *testing.T) *sql.DB {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := Migrate(context.Background(), db); err != nil {
+	if err := Migrate(context.Background(), db, nil); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return db
