@@ -30,13 +30,13 @@
     {
       "agent_id": "afc6be9e83b0e7f9a",
       "agent_type": "general-purpose",
-      "started_at": "2026-05-16T17:26:41.763Z",
+      "started_at": "2026-05-16T17:48:35.149Z",
       "parent_mode": "none",
       "status": "running"
     }
   ],
-  "total_spawned": 4,
-  "total_completed": 3,
+  "total_spawned": 5,
+  "total_completed": 4,
   "total_failed": 0,
-  "last_updated": "2026-05-16T17:26:41.879Z"
+  "last_updated": "2026-05-16T17:48:35.254Z"
 }

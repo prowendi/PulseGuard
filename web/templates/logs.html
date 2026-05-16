@@ -1,0 +1,31 @@
+{{ define "logs-page" }}{{ template "layout-open" . }}
+<div class="card">
+  <h1>推送日志</h1>
+  <p class="muted">共 {{ .Total }} 条；第 {{ .Page }} 页（每页 {{ .PerPage }} 条）。可通过 ?channel_id= 过滤。</p>
+  <table>
+    <thead><tr><th>ID</th><th>时间</th><th>通道</th><th>状态</th><th>消息</th><th>尝试</th><th>错误</th></tr></thead>
+    <tbody>
+      {{ range .Logs }}
+      <tr>
+        <td>{{ .ID }}</td>
+        <td>{{ .CreatedAt }}</td>
+        <td>{{ .ChannelID }}</td>
+        <td>
+          {{ if eq .Status "sent" }}<span class="badge ok">sent</span>
+          {{ else if eq .Status "failed" }}<span class="badge warn">failed</span>
+          {{ else }}<span class="badge err">{{ .Status }}</span>{{ end }}
+        </td>
+        <td><pre style="max-width:360px;white-space:pre-wrap">{{ .RenderedText }}</pre></td>
+        <td>{{ .Attempts }}</td>
+        <td><code>{{ .Error }}</code></td>
+      </tr>
+      {{ end }}
+      {{ if not .Logs }}<tr><td colspan="7" class="muted">尚无日志</td></tr>{{ end }}
+    </tbody>
+  </table>
+  <div class="row-actions" style="margin-top:12px">
+    {{ if gt .Page 1 }}<a class="button secondary" href="/ui/logs?page={{ sub .Page 1 }}&per_page={{ .PerPage }}">上一页</a>{{ end }}
+    {{ if hasMore .Page .PerPage .Total }}<a class="button secondary" href="/ui/logs?page={{ add .Page 1 }}&per_page={{ .PerPage }}">下一页</a>{{ end }}
+  </div>
+</div>
+{{ template "layout-close" . }}{{ end }}

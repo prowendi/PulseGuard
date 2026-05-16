@@ -87,6 +87,13 @@ var uiFuncs = template.FuncMap{
 		}
 		return "***" + s[len(s)-4:]
 	},
+	"add": func(a, b int) int { return a + b },
+	"sub": func(a, b int) int { return a - b },
+	// hasMore reports whether another page exists given the current
+	// page (1-based), per-page size, and total count.
+	"hasMore": func(page, perPage, total int) bool {
+		return page*perPage < total
+	},
 }
 
 // Render writes the named full-page template (typically "<slug>-page") with
