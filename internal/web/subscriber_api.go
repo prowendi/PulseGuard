@@ -64,6 +64,9 @@ func apiSubscriberDelete(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
-		writeJSON(w, http.StatusNoContent, nil)
+		// RFC 9110 §15.3.5: 204 No Content MUST NOT carry a body.
+		// channel_api.go uses WriteHeader; mirror that here so the
+		// API surface is consistent.
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

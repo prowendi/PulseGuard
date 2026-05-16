@@ -191,7 +191,11 @@ func apiCommandDelete(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
-		writeJSON(w, http.StatusNoContent, nil)
+		// RFC 9110 §15.3.5: 204 No Content responses MUST NOT include a
+		// message body. writeJSON would emit "null\n" which technically
+		// violates the spec and confuses strict clients (and the rest of
+		// our API surface — channel_api.go uses WriteHeader directly).
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
