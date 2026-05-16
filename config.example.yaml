@@ -1,0 +1,33 @@
+server:
+  listen_addr: ":8080"
+  base_url: "http://localhost:8080"
+  read_timeout: 10s
+  write_timeout: 30s
+  shutdown_timeout: 15s
+database:
+  path: "./data/pulseguard.db"
+  busy_timeout: 5s
+security:
+  master_key_b64: ""        # 32-byte base64; required
+  session_ttl: 336h         # 14d
+  cookie_secure: true
+  bcrypt_cost: 10
+worker:
+  count: 4
+  poll_interval: 1s
+  max_attempts: 6
+  inflight_reclaim_after: 60s
+  backoff_schedule: [1s, 5s, 15s, 60s, 5m, 15m]
+telegram:
+  api_base: "https://api.telegram.org"
+  http_timeout: 10s
+bootstrap:
+  initial_admin_email: ""
+  initial_admin_password: ""
+logging:
+  level: "info"
+  format: "json"
+cleanup:
+  push_logs_keep_days: 30
+  dedup_keys_sweep_interval: 1h
+  sessions_sweep_interval: 1h
