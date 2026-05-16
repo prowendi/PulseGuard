@@ -1,0 +1,34 @@
+{{ define "deadletters-page" }}{{ template "layout-open" . }}
+<div class="card">
+  <h1>死信队列</h1>
+  <p class="muted">达到最大重试或永久错误的推送进入此处；共 {{ .Total }} 条（第 {{ .Page }} 页）。</p>
+  <table>
+    <thead><tr><th>ID</th><th>时间</th><th>通道</th><th>Outbox</th><th>尝试</th><th>错误</th><th>Payload</th><th>操作</th></tr></thead>
+    <tbody>
+      {{ $csrf := .CSRF }}
+      {{ range .DLQ }}
+      <tr>
+        <td>{{ .ID }}</td>
+        <td>{{ .CreatedAt }}</td>
+        <td>{{ .ChannelID }}</td>
+        <td>{{ .OutboxID }}</td>
+        <td>{{ .Attempts }}</td>
+        <td><code>{{ .LastError }}</code></td>
+        <td><pre style="max-width:360px;white-space:pre-wrap">{{ .PayloadJSON }}</pre></td>
+        <td>
+          <form method="POST" action="/ui/deadletters/{{ .ID }}/replay">
+            <input type="hidden" name="csrf" value="{{ $csrf }}">
+            <button class="secondary">重投</button>
+          </form>
+        </td>
+      </tr>
+      {{ end }}
+      {{ if not .DLQ }}<tr><td colspan="8" class="muted">尚无死信</td></tr>{{ end }}
+    </tbody>
+  </table>
+  <div class="row-actions" style="margin-top:12px">
+    {{ if gt .Page 1 }}<a class="button secondary" href="/ui/deadletters?page={{ sub .Page 1 }}&per_page={{ .PerPage }}">上一页</a>{{ end }}
+    {{ if hasMore .Page .PerPage .Total }}<a class="button secondary" href="/ui/deadletters?page={{ add .Page 1 }}&per_page={{ .PerPage }}">下一页</a>{{ end }}
+  </div>
+</div>
+{{ template "layout-close" . }}{{ end }}

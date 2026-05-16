@@ -28,6 +28,7 @@ func mountAuthedAPI(r chi.Router, deps Deps) {
 		installTemplatesAPIRoutes(sec, deps)
 		installChannelsAPIRoutes(sec, deps)
 		installLogsAPIRoutes(sec, deps)
+		installDLQAPIRoutes(sec, deps)
 	})
 }
 
@@ -46,5 +47,6 @@ func mountAuthedUI(r chi.Router, deps Deps) {
 		installTemplatesUIRoutes(sec, deps)
 		installChannelsUIRoutes(sec, deps)
 		installLogsUIRoutes(sec, deps)
+		installDLQUIRoutes(sec, deps)
 	})
 }
