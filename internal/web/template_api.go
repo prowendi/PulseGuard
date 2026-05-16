@@ -211,7 +211,7 @@ func apiTemplatePreview(deps Deps) http.HandlerFunc {
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "body is required")
 			return
 		}
-		out, err := render.Render(&domain.Template{
+		out, err := render.Render(r.Context(), &domain.Template{
 			Name: "preview", ParseMode: mode, Body: p.Body,
 		}, p.Sample)
 		if err != nil {

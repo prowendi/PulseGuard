@@ -168,7 +168,7 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 
 	// Render — failure is always permanent (template bugs do not heal).
 	payload := decodePayload(item.PayloadJSON)
-	text, err := render.Render(tpl, payload)
+	text, err := render.Render(ctx, tpl, payload)
 	if err != nil {
 		w.deps.Logger.Warn("pipeline.worker render failed",
 			"worker_id", w.cfg.WorkerID,

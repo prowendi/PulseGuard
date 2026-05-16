@@ -1,8 +1,11 @@
 package render
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
 )
@@ -53,7 +56,7 @@ func TestEscapeHTML(t *testing.T) {
 
 func TestRenderSimpleVariable(t *testing.T) {
 	tpl := &domain.Template{Name: "t1", Body: `Hello {{ .name }}!`}
-	out, err := Render(tpl, map[string]any{"name": "world"})
+	out, err := Render(context.Background(), tpl, map[string]any{"name": "world"})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -65,14 +68,14 @@ func TestRenderSimpleVariable(t *testing.T) {
 func TestRenderConditional(t *testing.T) {
 	body := `{{ if eq .level "critical" }}CRIT{{ else }}warn{{ end }} {{ .title }}`
 	tpl := &domain.Template{Body: body}
-	out, err := Render(tpl, map[string]any{"level": "critical", "title": "down"})
+	out, err := Render(context.Background(), tpl, map[string]any{"level": "critical", "title": "down"})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	if out != "CRIT down" {
 		t.Fatalf("got %q", out)
 	}
-	out, err = Render(tpl, map[string]any{"level": "info", "title": "ok"})
+	out, err = Render(context.Background(), tpl, map[string]any{"level": "info", "title": "ok"})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -83,7 +86,7 @@ func TestRenderConditional(t *testing.T) {
 
 func TestRenderRange(t *testing.T) {
 	tpl := &domain.Template{Body: `{{ range .items }}[{{ . }}]{{ end }}`}
-	out, err := Render(tpl, map[string]any{"items": []any{"a", "b", "c"}})
+	out, err := Render(context.Background(), tpl, map[string]any{"items": []any{"a", "b", "c"}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -94,7 +97,7 @@ func TestRenderRange(t *testing.T) {
 
 func TestRenderEscapePipe(t *testing.T) {
 	tpl := &domain.Template{Body: `*{{ .title | escMD }}*`}
-	out, err := Render(tpl, map[string]any{"title": "CPU (95%) is high!"})
+	out, err := Render(context.Background(), tpl, map[string]any{"title": "CPU (95%) is high!"})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -109,7 +112,7 @@ func TestRenderEscapePipe(t *testing.T) {
 
 func TestRenderHTMLPipe(t *testing.T) {
 	tpl := &domain.Template{Body: `<b>{{ .title | escHTML }}</b>`}
-	out, err := Render(tpl, map[string]any{"title": "a<b>c"})
+	out, err := Render(context.Background(), tpl, map[string]any{"title": "a<b>c"})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -120,14 +123,16 @@ func TestRenderHTMLPipe(t *testing.T) {
 
 func TestRenderDefaultFunc(t *testing.T) {
 	tpl := &domain.Template{Body: `{{ default "n/a" .maybe }}`}
-	out, err := Render(tpl, map[string]any{})
+	// With missingkey=error we must pre-declare the key as nil so the
+	// default helper can do its job.
+	out, err := Render(context.Background(), tpl, map[string]any{"maybe": nil})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	if out != "n/a" {
 		t.Fatalf("got %q", out)
 	}
-	out, err = Render(tpl, map[string]any{"maybe": "real"})
+	out, err = Render(context.Background(), tpl, map[string]any{"maybe": "real"})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -138,7 +143,7 @@ func TestRenderDefaultFunc(t *testing.T) {
 
 func TestRenderUpperLower(t *testing.T) {
 	tpl := &domain.Template{Body: `{{ .x | upper }} {{ .y | lower }}`}
-	out, err := Render(tpl, map[string]any{"x": "abc", "y": "DEF"})
+	out, err := Render(context.Background(), tpl, map[string]any{"x": "abc", "y": "DEF"})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -147,21 +152,23 @@ func TestRenderUpperLower(t *testing.T) {
 	}
 }
 
-func TestRenderMissingField(t *testing.T) {
-	// Default Go text/template behaviour: missing map keys render as `<no value>`.
+func TestRenderMissingFieldNowErrors(t *testing.T) {
+	// With Option("missingkey=error") (added by R4) a typo in a payload
+	// key is surfaced as an execution error instead of silently rendering
+	// "<no value>" — the worker DLQs the row, the operator sees the bug.
 	tpl := &domain.Template{Body: `Hello {{ .missing }}`}
-	out, err := Render(tpl, map[string]any{})
-	if err != nil {
-		t.Fatalf("Render: %v", err)
+	_, err := Render(context.Background(), tpl, map[string]any{})
+	if err == nil {
+		t.Fatalf("expected error for missing key")
 	}
-	if !strings.Contains(out, "<no value>") {
-		t.Fatalf("expected <no value> sentinel, got %q", out)
+	if !strings.Contains(err.Error(), "missing") && !strings.Contains(err.Error(), "no entry") {
+		t.Fatalf("unexpected error %v", err)
 	}
 }
 
 func TestRenderParseError(t *testing.T) {
 	tpl := &domain.Template{Body: `{{ if `}
-	if _, err := Render(tpl, nil); err == nil {
+	if _, err := Render(context.Background(), tpl, nil); err == nil {
 		t.Fatalf("expected parse error")
 	}
 }
@@ -169,14 +176,14 @@ func TestRenderParseError(t *testing.T) {
 func TestRenderExecError(t *testing.T) {
 	// Calling a method on a nil value triggers an execution error.
 	tpl := &domain.Template{Body: `{{ .foo.bar }}`}
-	_, err := Render(tpl, map[string]any{"foo": nil})
+	_, err := Render(context.Background(), tpl, map[string]any{"foo": nil})
 	if err == nil {
 		t.Fatalf("expected execution error")
 	}
 }
 
 func TestRenderNilTemplate(t *testing.T) {
-	if _, err := Render(nil, nil); err == nil {
+	if _, err := Render(context.Background(), nil, nil); err == nil {
 		t.Fatalf("expected error on nil template")
 	}
 }
@@ -187,7 +194,7 @@ func TestRenderCriticalAlertSample(t *testing.T) {
 Host: ` + "`{{ .host | escMD }}`" + `
 Value: *{{ .value | escMD }}*`
 	tpl := &domain.Template{ParseMode: domain.ParseMarkdownV2, Body: body}
-	out, err := Render(tpl, map[string]any{
+	out, err := Render(context.Background(), tpl, map[string]any{
 		"level": "critical",
 		"title": "CPU High!",
 		"host":  "db01.prod",
@@ -201,5 +208,55 @@ Value: *{{ .value | escMD }}*`
 	}
 	if !strings.Contains(out, "db01\\.prod") {
 		t.Fatalf("host not escaped:\n%s", out)
+	}
+}
+
+// TestRenderOutputCapTerminatesExponentialTemplate is the regression
+// guard for S-H1: a maliciously crafted template that explodes via
+// nested ranges must be aborted within the 64KiB output cap, NOT allowed
+// to OOM the worker.
+func TestRenderOutputCapTerminatesExponentialTemplate(t *testing.T) {
+	// Each outer iteration concatenates 100 inner copies of "x". With
+	// 1000 outer items that's ~100 KiB of output — well above 64 KiB.
+	body := `{{ range .outer }}{{ range $i := $.inner }}{{ $i }}{{ end }}{{ end }}`
+	tpl := &domain.Template{Body: body}
+	outer := make([]any, 1000)
+	inner := make([]any, 100)
+	for i := range outer {
+		outer[i] = i
+	}
+	for i := range inner {
+		inner[i] = "x"
+	}
+	_, err := Render(context.Background(), tpl, map[string]any{"outer": outer, "inner": inner})
+	if err == nil {
+		t.Fatalf("expected ErrOutputTooLarge for explosive template")
+	}
+	if !errors.Is(err, ErrOutputTooLarge) {
+		t.Fatalf("expected ErrOutputTooLarge, got %v", err)
+	}
+}
+
+// TestRenderRespectsCallerTimeout proves the deadline-driven exit path.
+// A template using {{range}} over a huge slice with a small per-item
+// payload eventually completes — but if the caller's ctx is cancelled
+// first, Render must return ctx.Err.
+func TestRenderRespectsCallerTimeout(t *testing.T) {
+	tpl := &domain.Template{Body: `{{ range .items }}{{ . }}{{ end }}`}
+	items := make([]any, 100)
+	for i := range items {
+		items[i] = "ok"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	// Give the deadline a moment to elapse before invoking Render so the
+	// goroutine select sees a Done channel immediately.
+	time.Sleep(time.Millisecond)
+	_, err := Render(ctx, tpl, map[string]any{"items": items})
+	if err == nil {
+		t.Fatalf("expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
 	}
 }
