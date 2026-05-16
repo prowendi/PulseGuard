@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -25,10 +24,16 @@ func NewDedupRepo(db *sql.DB) *DedupRepo {
 
 // SeenOrInsert atomically checks whether channelID+fp is already live;
 // if so, it bumps last_seen_at and hit_count and returns true. Otherwise
-// it inserts a fresh row and returns false. windowSec=0 disables dedup
-// (returns false without persisting).
+// it inserts a fresh row (or revives an expired one) and returns false.
+// windowSec=0 disables dedup (returns false without persisting).
 //
-// We use UPSERT (ON CONFLICT) to make this race-free in SQLite.
+// We use a single UPSERT with a RETURNING clause whose value depends on
+// whether the previous row had already expired at now. This collapses
+// the prior SELECT-then-INSERT / SELECT-then-UPDATE flow into one SQL
+// statement, eliminating the deferred-tx race window where two callers
+// could both see "no rows" and both insert. SQLite serialises the
+// UPSERT against (channel_id, fingerprint) via the unique constraint,
+// so concurrent callers cannot double-count or both see "first sighting".
 func (r *DedupRepo) SeenOrInsert(ctx context.Context, channelID int64, fp string, now time.Time, windowSec int) (bool, error) {
 	if windowSec <= 0 {
 		return false, nil
@@ -36,66 +41,44 @@ func (r *DedupRepo) SeenOrInsert(ctx context.Context, channelID int64, fp string
 	if channelID == 0 || fp == "" {
 		return false, fmt.Errorf("%w: dedup requires channel_id and fingerprint", domain.ErrValidation)
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var existingExpires int64
-	var existingHits int
-	err = tx.QueryRowContext(ctx,
-		`SELECT expires_at, hit_count FROM dedup_keys WHERE channel_id = ? AND fingerprint = ?`,
-		channelID, fp,
-	).Scan(&existingExpires, &existingHits)
 	nowMs := now.UnixMilli()
 	expiresAt := now.Add(time.Duration(windowSec) * time.Second).UnixMilli()
 
-	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO dedup_keys (channel_id, fingerprint, first_seen_at,
-			                       last_seen_at, hit_count, expires_at)
-			VALUES (?, ?, ?, ?, 1, ?)`,
-			channelID, fp, nowMs, nowMs, expiresAt); err != nil {
-			return false, fmt.Errorf("insert dedup: %w", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit dedup: %w", err)
-		}
-		return false, nil
-	}
+	// The CASE WHEN expression returns 0 when the row is a brand-new
+	// insertion OR an expired row being refreshed (treated as a first
+	// sighting); 1 when an existing live row was bumped. RETURNING gives
+	// us this value without an extra round trip.
+	//
+	// On conflict, we compare the old expires_at (accessible via the
+	// dedup_keys alias) against nowMs to decide whether this is a refresh
+	// (was expired) or a true hit (still live).
+	const q = `
+		INSERT INTO dedup_keys
+		  (channel_id, fingerprint, first_seen_at, last_seen_at, hit_count, expires_at)
+		VALUES (?, ?, ?, ?, 1, ?)
+		ON CONFLICT(channel_id, fingerprint) DO UPDATE SET
+		  first_seen_at = CASE WHEN dedup_keys.expires_at <= excluded.last_seen_at
+		                       THEN excluded.last_seen_at
+		                       ELSE dedup_keys.first_seen_at END,
+		  last_seen_at  = excluded.last_seen_at,
+		  hit_count     = CASE WHEN dedup_keys.expires_at <= excluded.last_seen_at
+		                       THEN 1
+		                       ELSE dedup_keys.hit_count + 1 END,
+		  expires_at    = CASE WHEN dedup_keys.expires_at <= excluded.last_seen_at
+		                       THEN excluded.expires_at
+		                       ELSE dedup_keys.expires_at END
+		RETURNING hit_count`
+
+	var hitCount int
+	err := r.db.QueryRowContext(ctx, q,
+		channelID, fp, nowMs, nowMs, expiresAt,
+	).Scan(&hitCount)
 	if err != nil {
-		return false, fmt.Errorf("select dedup: %w", err)
+		return false, fmt.Errorf("upsert dedup: %w", err)
 	}
-
-	// Row exists; classify as live or expired.
-	if existingExpires <= nowMs {
-		// Expired — refresh window and treat as first sighting.
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE dedup_keys
-			   SET first_seen_at = ?, last_seen_at = ?, hit_count = 1, expires_at = ?
-			 WHERE channel_id = ? AND fingerprint = ?`,
-			nowMs, nowMs, expiresAt, channelID, fp); err != nil {
-			return false, fmt.Errorf("refresh dedup: %w", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit dedup: %w", err)
-		}
-		return false, nil
-	}
-
-	// Live — bump counters; report already-seen.
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE dedup_keys
-		   SET last_seen_at = ?, hit_count = hit_count + 1
-		 WHERE channel_id = ? AND fingerprint = ?`,
-		nowMs, channelID, fp); err != nil {
-		return false, fmt.Errorf("bump dedup: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit dedup: %w", err)
-	}
-	return true, nil
+	// hit_count == 1 means either fresh insert OR expired row refreshed;
+	// in both cases this is a "first sighting" for the new window.
+	return hitCount > 1, nil
 }
 
 // PurgeExpired drops every dedup_keys row whose expires_at <= now.
