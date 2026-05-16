@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.starlark.net/starlark"
@@ -108,12 +109,12 @@ func (e *Executor) Execute(ctx context.Context, code string, args []string) (*Re
 	// soon as runCtx deadlines. The watcher exits when execution
 	// returns (done channel closes).
 	done := make(chan struct{})
-	var timedOut atomicBool
+	var timedOut atomic.Bool
 	go func() {
 		select {
 		case <-runCtx.Done():
 			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-				timedOut.Set(true)
+				timedOut.Store(true)
 			}
 			thread.Cancel("scripting timeout")
 		case <-done:
@@ -143,7 +144,7 @@ func (e *Executor) Execute(ctx context.Context, code string, args []string) (*Re
 	}
 	globals, err := starlark.ExecFileOptions(opts, thread, "command.star", code, predeclared)
 	if err != nil {
-		if timedOut.Get() {
+		if timedOut.Load() {
 			return nil, ErrTimeout
 		}
 		return nil, classifyErr(err)
@@ -163,7 +164,7 @@ func (e *Executor) Execute(ctx context.Context, code string, args []string) (*Re
 	argList := starlark.NewList(argv)
 	ret, err := starlark.Call(thread, fn, starlark.Tuple{argList}, nil)
 	if err != nil {
-		if timedOut.Get() {
+		if timedOut.Load() {
 			return nil, ErrTimeout
 		}
 		return nil, classifyErr(err)
@@ -257,16 +258,6 @@ func max0(a, b int) int {
 	}
 	return b
 }
-
-// atomicBool is a lightweight, lock-free flag used by the timeout
-// watcher to flag a Cancel-induced abort.
-type atomicBool struct {
-	mu sync.Mutex
-	v  bool
-}
-
-func (b *atomicBool) Set(v bool) { b.mu.Lock(); b.v = v; b.mu.Unlock() }
-func (b *atomicBool) Get() bool  { b.mu.Lock(); defer b.mu.Unlock(); return b.v }
 
 // timeModule exposes a single now() function returning RFC3339 UTC.
 // The returned value is a starlark.Value with HasAttrs so user code
