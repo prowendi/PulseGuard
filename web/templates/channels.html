@@ -1,0 +1,62 @@
+{{ define "channels-page" }}{{ template "layout-open" . }}
+<div class="card">
+  <h1>通道</h1>
+  <p class="muted">每个通道绑定 1 个 Bot + 1 个模板 + 1 个 chat_id；push_token 用于公开 webhook。</p>
+  <table>
+    <thead><tr><th>ID</th><th>名称</th><th>Push Token</th><th>Bot</th><th>Tpl</th><th>Chat</th><th>Rate</th><th>Dedup(s)</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody>
+      {{ $csrf := .CSRF }}
+      {{ range .Channels }}
+      <tr>
+        <td>{{ .ID }}</td>
+        <td>{{ .Name }}</td>
+        <td><code>{{ .PushToken }}</code></td>
+        <td>{{ .BotID }}</td>
+        <td>{{ .TemplateID }}</td>
+        <td>{{ .ChatID }}</td>
+        <td>{{ .RatePerMin }}/min</td>
+        <td>{{ .DedupWindowS }}</td>
+        <td>{{ if .Enabled }}<span class="badge ok">启用</span>{{ else }}<span class="badge err">禁用</span>{{ end }}</td>
+        <td class="row-actions">
+          <form method="POST" action="/ui/channels/{{ .ID }}/rotate-token">
+            <input type="hidden" name="csrf" value="{{ $csrf }}">
+            <button class="secondary">轮换 Token</button>
+          </form>
+          <form method="POST" action="/ui/channels/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');">
+            <input type="hidden" name="csrf" value="{{ $csrf }}">
+            <button class="danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {{ end }}
+      {{ if not .Channels }}<tr><td colspan="10" class="muted">尚无通道</td></tr>{{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>新建通道</h2>
+  <form method="POST" action="/ui/channels">
+    <input type="hidden" name="csrf" value="{{ .CSRF }}">
+    <div class="field"><label>名称</label><input type="text" name="name" required maxlength="64"></div>
+    <div class="field">
+      <label>Bot</label>
+      <select name="bot_id" required>
+        <option value="">请选择…</option>
+        {{ range .Bots }}<option value="{{ .ID }}">{{ .Name }} (***{{ .BotTokenLast4 }})</option>{{ end }}
+      </select>
+    </div>
+    <div class="field">
+      <label>模板</label>
+      <select name="template_id" required>
+        <option value="">请选择…</option>
+        {{ range .Templates }}<option value="{{ .ID }}">{{ .Name }} [{{ .ParseMode }}]</option>{{ end }}
+      </select>
+    </div>
+    <div class="field"><label>Chat ID</label><input type="text" name="chat_id" required></div>
+    <div class="field"><label>Rate per min</label><input type="number" name="rate_per_min" value="60" min="0"></div>
+    <div class="field"><label>Dedup window (秒)</label><input type="number" name="dedup_window_s" value="0" min="0"></div>
+    <button type="submit">创建</button>
+  </form>
+</div>
+{{ template "layout-close" . }}{{ end }}

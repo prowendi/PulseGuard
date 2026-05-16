@@ -26,6 +26,7 @@ func mountAuthedAPI(r chi.Router, deps Deps) {
 		sec.Post("/auth/logout", apiLogout(deps))
 		installBotsAPIRoutes(sec, deps)
 		installTemplatesAPIRoutes(sec, deps)
+		installChannelsAPIRoutes(sec, deps)
 	})
 }
 
@@ -42,5 +43,6 @@ func mountAuthedUI(r chi.Router, deps Deps) {
 		sec.Post("/logout", uiLogoutPost(deps))
 		installBotsUIRoutes(sec, deps)
 		installTemplatesUIRoutes(sec, deps)
+		installChannelsUIRoutes(sec, deps)
 	})
 }
