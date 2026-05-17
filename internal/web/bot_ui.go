@@ -3,8 +3,10 @@ package web
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/wendi/pulseguard/internal/platform"
 	wmw "github.com/wendi/pulseguard/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
@@ -31,9 +33,14 @@ func uiBotList(deps Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		now := time.Now()
+		var snap map[int64]platform.BotHealth
+		if deps.BotListeners != nil {
+			snap = deps.BotListeners.HealthSnapshot()
+		}
 		views := make([]botView, 0, len(items))
 		for _, b := range items {
-			views = append(views, toBotView(b))
+			views = append(views, toBotViewWithHealth(b, snap[b.ID], now))
 		}
 		_ = Render(w, http.StatusOK, "bots-page", botListPage{
 			pageData: pageData{
@@ -174,9 +181,14 @@ func uiBotDelete(deps Deps) http.HandlerFunc {
 
 func uiBotListWithFlash(w http.ResponseWriter, r *http.Request, deps Deps, tenant *domain.Tenant, level, msg string) {
 	items, _ := deps.Bots.ListByTenant(r.Context(), tenant.ID)
+	now := time.Now()
+	var snap map[int64]platform.BotHealth
+	if deps.BotListeners != nil {
+		snap = deps.BotListeners.HealthSnapshot()
+	}
 	views := make([]botView, 0, len(items))
 	for _, b := range items {
-		views = append(views, toBotView(b))
+		views = append(views, toBotViewWithHealth(b, snap[b.ID], now))
 	}
 	_ = Render(w, http.StatusOK, "bots-page", botListPage{
 		pageData: pageData{

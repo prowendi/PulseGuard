@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
 )
@@ -52,6 +53,8 @@ type Manager struct {
 	logger          *slog.Logger
 	factories       map[string]Factory
 	onTokenInvalid  TokenInvalidCallback
+	health          *healthState
+	now             func() time.Time
 
 	mu     sync.Mutex
 	active map[int64]*entry
@@ -87,7 +90,54 @@ func NewManager(logger *slog.Logger, factories ...Factory) *Manager {
 		logger:    logger,
 		factories: fm,
 		active:    map[int64]*entry{},
+		health:    newHealthState(),
+		now:       time.Now,
 	}
+}
+
+// Health returns a by-value snapshot of the BotHealth recorded for
+// botID. Zero value is returned when no signal has been received yet
+// (listener still warming up, or no traffic). Safe for concurrent use.
+func (m *Manager) Health(botID int64) BotHealth {
+	return m.health.get(botID)
+}
+
+// HealthSnapshot returns a copy of every recorded BotHealth keyed by
+// botID. The web layer uses this to hydrate the bots list page in a
+// single lock acquisition.
+func (m *Manager) HealthSnapshot() map[int64]BotHealth {
+	return m.health.snapshot()
+}
+
+// RecordUpdate is invoked by a listener after a successful
+// non-empty getUpdates batch so the health panel can show "last seen"
+// freshness. Safe to call from listener goroutines.
+func (m *Manager) RecordUpdate(botID int64) {
+	if botID == 0 {
+		return
+	}
+	m.health.recordUpdate(botID, m.now())
+}
+
+// RecordDispatch is invoked by a listener after a successful custom-
+// command dispatch (not built-ins). Bumps CommandsDispatched +
+// LastSeenAt.
+func (m *Manager) RecordDispatch(botID int64) {
+	if botID == 0 {
+		return
+	}
+	m.health.recordDispatch(botID, m.now())
+}
+
+// RecordError is invoked by a listener when an operation fails so the
+// UI can surface the most recent error message. The message is
+// truncated to ~200 chars at the store boundary; empty strings are
+// ignored so callers can pass err.Error() without nil-checking.
+func (m *Manager) RecordError(botID int64, msg string) {
+	if botID == 0 {
+		return
+	}
+	m.health.recordError(botID, msg, m.now())
 }
 
 // SetTokenInvalidCallback installs the callback invoked when a listener

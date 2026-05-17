@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/wendi/pulseguard/internal/platform"
 	wmw "github.com/wendi/pulseguard/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
@@ -17,21 +19,91 @@ import (
 // Enabled mirrors the Bot.Enabled domain flag so the UI can render a
 // distinct "paused" state and the enable/disable buttons stay idempotent
 // (the client checks before issuing the toggle).
+//
+// Health carries the V6-2 in-memory liveness panel: LastSeenAt /
+// counters / LastError so the bots page can render a colour-coded
+// indicator (green/yellow/red/gray) plus a tooltip without a second
+// round-trip.
 type botView struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	Platform      string `json:"platform"`
-	Description   string `json:"description,omitempty"`
-	BotTokenLast4 string `json:"bot_token_last4"`
-	Enabled       bool   `json:"enabled"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID            int64         `json:"id"`
+	Name          string        `json:"name"`
+	Platform      string        `json:"platform"`
+	Description   string        `json:"description,omitempty"`
+	BotTokenLast4 string        `json:"bot_token_last4"`
+	Enabled       bool          `json:"enabled"`
+	CreatedAt     string        `json:"created_at"`
+	UpdatedAt     string        `json:"updated_at"`
+	Health        botHealthView `json:"health"`
+}
+
+// botHealthView is the JSON projection of platform.BotHealth. Times
+// are formatted as UTC RFC-3339 so the wire format matches the rest
+// of the API. Empty timestamps surface as the empty string so JS can
+// do a simple truthiness check.
+type botHealthView struct {
+	Status             string `json:"status"` // green/yellow/red/gray
+	LastSeenAt         string `json:"last_seen_at,omitempty"`
+	LastSeenSecondsAgo int64  `json:"last_seen_seconds_ago,omitempty"`
+	UpdatesReceived    int64  `json:"updates_received"`
+	CommandsDispatched int64  `json:"commands_dispatched"`
+	LastError          string `json:"last_error,omitempty"`
+	LastErrorAt        string `json:"last_error_at,omitempty"`
+}
+
+// healthStatus classifies a BotHealth snapshot into a colour bucket
+// the UI can render directly. Thresholds:
+//
+//   - disabled                -> "gray"
+//   - LastSeenAt within 5min  -> "green"
+//   - LastSeenAt within 30min -> "yellow"
+//   - everything else         -> "red"
+//
+// An enabled bot without a single recorded signal classifies as
+// "yellow" until the listener has had a chance to long-poll; that
+// grace keeps a fresh deploy from immediately painting the table red.
+func healthStatus(enabled bool, h platform.BotHealth, now time.Time) string {
+	if !enabled {
+		return "gray"
+	}
+	if h.LastSeenAt.IsZero() {
+		return "yellow"
+	}
+	since := now.Sub(h.LastSeenAt)
+	switch {
+	case since <= 5*time.Minute:
+		return "green"
+	case since <= 30*time.Minute:
+		return "yellow"
+	default:
+		return "red"
+	}
 }
 
 func toBotView(b *domain.Bot) botView {
+	return toBotViewWithHealth(b, platform.BotHealth{}, time.Now())
+}
+
+// toBotViewWithHealth is the workhorse constructor used when the
+// caller has access to a Manager snapshot. The bare toBotView keeps
+// the existing call sites working without forcing every handler to
+// thread the Manager through.
+func toBotViewWithHealth(b *domain.Bot, h platform.BotHealth, now time.Time) botView {
 	last4 := ""
 	if len(b.BotToken) >= 4 {
 		last4 = b.BotToken[len(b.BotToken)-4:]
+	}
+	hv := botHealthView{
+		Status:             healthStatus(b.Enabled, h, now),
+		UpdatesReceived:    h.UpdatesReceived,
+		CommandsDispatched: h.CommandsDispatched,
+		LastError:          h.LastError,
+	}
+	if !h.LastSeenAt.IsZero() {
+		hv.LastSeenAt = h.LastSeenAt.UTC().Format("2006-01-02T15:04:05Z")
+		hv.LastSeenSecondsAgo = int64(now.Sub(h.LastSeenAt).Seconds())
+	}
+	if !h.LastErrorAt.IsZero() {
+		hv.LastErrorAt = h.LastErrorAt.UTC().Format("2006-01-02T15:04:05Z")
 	}
 	return botView{
 		ID:            b.ID,
@@ -42,7 +114,19 @@ func toBotView(b *domain.Bot) botView {
 		Enabled:       b.Enabled,
 		CreatedAt:     b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:     b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		Health:        hv,
 	}
+}
+
+// healthFor returns the BotHealth for botID from the Manager (when
+// wired) or the zero value otherwise. The zero value is safe to feed
+// into toBotViewWithHealth — it classifies as "yellow" for an enabled
+// bot and "gray" for a disabled one.
+func healthFor(deps Deps, botID int64) platform.BotHealth {
+	if deps.BotListeners == nil {
+		return platform.BotHealth{}
+	}
+	return deps.BotListeners.Health(botID)
 }
 
 type botCreatePayload struct {
@@ -80,9 +164,17 @@ func apiBotList(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
+		// Hydrate the health snapshot once so the per-bot map lookup
+		// is O(1) inside the loop instead of taking the Manager mutex
+		// per row.
+		now := time.Now()
+		var snap map[int64]platform.BotHealth
+		if deps.BotListeners != nil {
+			snap = deps.BotListeners.HealthSnapshot()
+		}
 		views := make([]botView, 0, len(items))
 		for _, b := range items {
-			views = append(views, toBotView(b))
+			views = append(views, toBotViewWithHealth(b, snap[b.ID], now))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": views})
 	}
@@ -144,7 +236,7 @@ func apiBotGet(deps Deps) http.HandlerFunc {
 			writeRepoError(w, r, deps, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toBotView(bot))
+		writeJSON(w, http.StatusOK, toBotViewWithHealth(bot, healthFor(deps, bot.ID), time.Now()))
 	}
 }
 

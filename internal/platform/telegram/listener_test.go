@@ -996,3 +996,86 @@ func TestListener_AckBuiltinChatFallback(t *testing.T) {
 		t.Fatalf("AckedBy = %q, want chat:903", got)
 	}
 }
+
+// TestListener_HealthHookFiresOnUpdate verifies the listener bumps
+// the HealthHook callbacks for the V6-2 in-memory health panel:
+// non-empty getUpdates batches fire OnUpdate, dispatched commands
+// fire OnDispatch. Built-in /start does NOT fire OnDispatch.
+func TestListener_HealthHookFiresOnUpdate(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":42},"text":"/查询"}
+	}]}`)
+
+	var (
+		updates   int32
+		dispatch  int32
+	)
+	hook := HealthHook{
+		OnUpdate:   func(_ int64) { atomic.AddInt32(&updates, 1) },
+		OnDispatch: func(_ int64) { atomic.AddInt32(&dispatch, 1) },
+	}
+	disp := newFakeDispatcher()
+	disp.replies["查询"] = DispatchOutput{Text: "ok"}
+
+	l, err := New(botFixture(), Options{
+		APIBase:    srv.URL,
+		HTTP:       srv.Client(),
+		Logger:     quietLogger(),
+		Dispatcher: disp,
+		Health:     hook,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool {
+		return atomic.LoadInt32(&updates) >= 1 && atomic.LoadInt32(&dispatch) >= 1
+	})
+	if got := atomic.LoadInt32(&updates); got < 1 {
+		t.Fatalf("OnUpdate fired %d times, want >=1", got)
+	}
+	if got := atomic.LoadInt32(&dispatch); got != 1 {
+		t.Fatalf("OnDispatch fired %d times, want 1", got)
+	}
+}
+
+// TestListener_HealthHookOnBuiltinSkipsDispatch verifies built-in
+// /start/chatid/commands do NOT increment OnDispatch — those are
+// onboarding/management, not "the bot is doing work" signals.
+func TestListener_HealthHookOnBuiltinSkipsDispatch(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":42},"text":"/start"}
+	}]}`)
+
+	var dispatch int32
+	hook := HealthHook{
+		OnDispatch: func(_ int64) { atomic.AddInt32(&dispatch, 1) },
+	}
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Health:  hook,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	time.Sleep(50 * time.Millisecond)
+	if got := atomic.LoadInt32(&dispatch); got != 0 {
+		t.Fatalf("OnDispatch fired %d times for /start, want 0", got)
+	}
+}

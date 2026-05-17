@@ -120,6 +120,29 @@ type AckInput struct {
 // with a distinct user reply.
 var ErrAckAlreadyExists = errors.New("telegram: ack already exists")
 
+// HealthHook is the listener → Manager.RecordX bridge for the V6-2
+// in-memory health panel. Implementations are expected to be
+// non-blocking and very cheap (map lookup + counter bump). The three
+// callbacks fire in the listener's hot path:
+//
+//   - OnUpdate    after a successful non-empty getUpdates batch.
+//   - OnDispatch  after a successful custom-command dispatch (NOT for
+//                 built-ins like /start, /commands, /ack — those are
+//                 onboarding/management, not "the bot is doing work").
+//   - OnError     when any listener operation surfaces an error, with
+//                 a short kind string so the recorder can prefix the
+//                 message ("getUpdates: …", "sendMessage: …").
+//
+// Defined as plain function fields on Options instead of a struct
+// interface so the platform package can inject hooks without the
+// listener importing platform (which would re-introduce the cycle
+// the ErrTokenInvalid aliasing was designed to avoid).
+type HealthHook struct {
+	OnUpdate   func(botID int64)
+	OnDispatch func(botID int64)
+	OnError    func(botID int64, kind string, err error)
+}
+
 // DispatchInput is the listener → dispatcher contract.
 type DispatchInput struct {
 	BotID  int64
@@ -178,6 +201,7 @@ type Listener struct {
 	catalog    CommandCatalog    // optional: powers setMyCommands + /commands
 	remover    SubscriberRemover // optional: powers /unsubscribe
 	acker      AlertAcker        // optional: powers /ack
+	health     HealthHook        // optional: bumps Manager health counters
 }
 
 // Options bundles the optional knobs. apiBase defaults to
@@ -195,6 +219,10 @@ type Listener struct {
 // Remover, when non-nil, powers the built-in /unsubscribe command.
 //
 // Acker, when non-nil, powers the built-in /ack <fingerprint> command.
+//
+// Health, when its callbacks are non-nil, bridges hot-path events to
+// the Manager's in-memory health panel (V6-2). Individual callbacks
+// may be nil — the listener nil-checks each before invoking.
 type Options struct {
 	APIBase    string
 	HTTP       *http.Client
@@ -203,6 +231,7 @@ type Options struct {
 	Catalog    CommandCatalog
 	Remover    SubscriberRemover
 	Acker      AlertAcker
+	Health     HealthHook
 }
 
 // New constructs a Listener for the supplied bot. The bot's BotToken
@@ -247,6 +276,7 @@ func New(bot *domain.Bot, opts Options) (*Listener, error) {
 		catalog:    opts.Catalog,
 		remover:    opts.Remover,
 		acker:      opts.Acker,
+		health:     opts.Health,
 	}, nil
 }
 
@@ -302,6 +332,7 @@ func (l *Listener) Run(ctx context.Context) error {
 		updates, err := l.getUpdates(ctx, offset)
 		if err != nil {
 			if errors.Is(err, ErrTokenInvalid) {
+				l.recordError("getUpdates", err)
 				return err
 			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -322,10 +353,19 @@ func (l *Listener) Run(ctx context.Context) error {
 				"tenant_id", l.tenantID,
 				"err", err.Error(),
 				"sleep", delay.String())
+			l.recordError("getUpdates", err)
 			if !sleepCtx(ctx, delay) {
 				return nil
 			}
 			continue
+		}
+
+		// Health: a non-empty update batch is proof of liveness.
+		// Empty long-poll rounds (the steady-state idle case) do not
+		// count — they would otherwise flap the "last seen" clock every
+		// 25 s and obscure a truly silent bot.
+		if len(updates) > 0 {
+			l.recordUpdate()
 		}
 
 		for _, u := range updates {
@@ -507,10 +547,12 @@ func (l *Listener) handle(ctx context.Context, u update) {
 	if strings.TrimSpace(out.Text) == "" {
 		l.logger.Info("telegram: dispatch returned empty text (no reply sent)",
 			"bot_id", l.botID, "name", name)
+		l.recordDispatch()
 		return
 	}
 	l.logger.Info("telegram: dispatched ok",
 		"bot_id", l.botID, "name", name, "reply_len", len(out.Text))
+	l.recordDispatch()
 	l.replyText(ctx, msg.Chat.ID, out.Text)
 }
 
@@ -690,6 +732,27 @@ func ackedByLabel(from *chatUser, chatID int64) string {
 		}
 	}
 	return "chat:" + strconv.FormatInt(chatID, 10)
+}
+
+// recordUpdate / recordDispatch / recordError are nil-safe wrappers
+// around the optional HealthHook callbacks injected via Options.
+// Hot-path helpers — keep them inline-able.
+func (l *Listener) recordUpdate() {
+	if l.health.OnUpdate != nil {
+		l.health.OnUpdate(l.dbBotID)
+	}
+}
+
+func (l *Listener) recordDispatch() {
+	if l.health.OnDispatch != nil {
+		l.health.OnDispatch(l.dbBotID)
+	}
+}
+
+func (l *Listener) recordError(kind string, err error) {
+	if l.health.OnError != nil && err != nil {
+		l.health.OnError(l.dbBotID, kind, err)
+	}
 }
 
 // replyText is the underlying sendMessage helper. Errors are logged

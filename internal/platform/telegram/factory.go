@@ -19,6 +19,7 @@ type Factory struct {
 	catalog    CommandCatalog
 	remover    SubscriberRemover
 	acker      AlertAcker
+	health     HealthHook
 }
 
 // FactoryOptions bundles the optional knobs. apiBase=="" defaults to
@@ -34,6 +35,11 @@ type Factory struct {
 // Remover, when non-nil, powers the built-in /unsubscribe command.
 //
 // Acker, when non-nil, powers the built-in /ack <fingerprint> command.
+//
+// Health, when its callbacks are non-nil, bridges listener hot-path
+// events (update batches, dispatches, errors) to the Manager's
+// in-memory health panel (V6-2). Each callback is nil-checked at the
+// invocation site so partial wire-ups are safe.
 type FactoryOptions struct {
 	APIBase    string
 	HTTP       *http.Client
@@ -42,6 +48,7 @@ type FactoryOptions struct {
 	Catalog    CommandCatalog
 	Remover    SubscriberRemover
 	Acker      AlertAcker
+	Health     HealthHook
 }
 
 // NewFactory constructs a Factory. Pass FactoryOptions{} for defaults.
@@ -54,6 +61,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		catalog:    opts.Catalog,
 		remover:    opts.Remover,
 		acker:      opts.Acker,
+		health:     opts.Health,
 	}
 }
 
@@ -71,6 +79,7 @@ func (f *Factory) Build(bot *domain.Bot) (platform.Listener, error) {
 		Catalog:    f.catalog,
 		Remover:    f.remover,
 		Acker:      f.acker,
+		Health:     f.health,
 	})
 }
 

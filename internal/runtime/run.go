@@ -233,6 +233,29 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	remover := subscriberRemoverAdapter{subscribers: subscribers}
 	acker := alertAckerAdapter{acks: alertAcks, bots: bots}
 
+	// listenerMgr is created below; the Health hook needs a closure
+	// that captures it, but the factories also need the hook. We use
+	// a pointer so the hook can hold a stable reference even though
+	// listenerMgr is assigned after the factories are constructed.
+	var listenerMgr *platform.Manager
+	healthHook := telegram.HealthHook{
+		OnUpdate: func(botID int64) {
+			if listenerMgr != nil {
+				listenerMgr.RecordUpdate(botID)
+			}
+		},
+		OnDispatch: func(botID int64) {
+			if listenerMgr != nil {
+				listenerMgr.RecordDispatch(botID)
+			}
+		},
+		OnError: func(botID int64, kind string, err error) {
+			if listenerMgr != nil && err != nil {
+				listenerMgr.RecordError(botID, kind+": "+err.Error())
+			}
+		},
+	}
+
 	listenerFactories := ov.BotListenerFactories
 	if len(listenerFactories) == 0 {
 		tgTimeout := cfg.Telegram.HTTPTimeout.Std()
@@ -248,10 +271,11 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 				Catalog:    catalog,
 				Remover:    remover,
 				Acker:      acker,
+				Health:     healthHook,
 			}),
 		}
 	}
-	listenerMgr := platform.NewManager(logger, listenerFactories...)
+	listenerMgr = platform.NewManager(logger, listenerFactories...)
 	// Auto-disable the bot row when its listener exits with
 	// telegram.ErrTokenInvalid (401). Without this hook a revoked
 	// token would loop forever, retrying at the Telegram backoff and

@@ -20,6 +20,7 @@
             <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-16">ID</th>
             <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">名称</th>
             <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Platform</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">状态</th>
             <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Token</th>
             <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">描述</th>
             <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider text-right">操作</th>
@@ -32,6 +33,27 @@
             <td class="px-5 py-3 text-slate-400 font-mono text-[12px]">#{{ .ID }}</td>
             <td class="px-5 py-3"><div class="flex items-center gap-2.5"><span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100"><svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="text-slate-900 font-semibold dark:text-white">{{ .Name }}</span></div></td>
             <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700">{{ .Platform }}</span></td>
+            <td class="px-5 py-3">
+              {{- $tipLast := "尚未收到心跳" -}}
+              {{- if .Health.LastSeenAt }}{{ $tipLast = printf "最近活跃: %s (UTC)" .Health.LastSeenAt }}{{ end -}}
+              {{- $tip := printf "%s | updates=%d dispatches=%d" $tipLast .Health.UpdatesReceived .Health.CommandsDispatched -}}
+              {{- if .Health.LastError }}{{ $tip = printf "%s | last_error=%s" $tip .Health.LastError }}{{ end -}}
+              <span class="inline-flex items-center gap-1.5" title="{{ $tip }}">
+                {{- if eq .Health.Status "green" -}}
+                  <span class="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-100 dark:ring-emerald-900"></span>
+                  <span class="text-[11.5px] text-emerald-700 dark:text-emerald-400 font-medium">活跃</span>
+                {{- else if eq .Health.Status "yellow" -}}
+                  <span class="inline-block h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-amber-100 dark:ring-amber-900"></span>
+                  <span class="text-[11.5px] text-amber-700 dark:text-amber-400 font-medium">空闲</span>
+                {{- else if eq .Health.Status "red" -}}
+                  <span class="inline-block h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-rose-100 dark:ring-rose-900"></span>
+                  <span class="text-[11.5px] text-rose-700 dark:text-rose-400 font-medium">失联</span>
+                {{- else -}}
+                  <span class="inline-block h-2.5 w-2.5 rounded-full bg-slate-300 ring-2 ring-slate-100 dark:bg-slate-600 dark:ring-slate-800"></span>
+                  <span class="text-[11.5px] text-slate-500 dark:text-slate-400 font-medium">暂停</span>
+                {{- end -}}
+              </span>
+            </td>
             <td class="px-5 py-3 text-slate-600 font-mono text-[12px] dark:text-slate-300">•••{{ .BotTokenLast4 }}</td>
             <td class="px-5 py-3 text-slate-500 max-w-xs truncate">{{ .Description }}</td>
             <td class="px-5 py-3 text-right whitespace-nowrap">
@@ -49,7 +71,7 @@
             </td>
           </tr>
           {{ end }}
-          {{ if not .Bots }}<tr><td colspan="6" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无 Bot" "通过右上方按钮创建第一个推送 Bot。Token 会被加密保存。" "javascript:psgOpenDrawer('drawer-new-bot')" "立即创建") }}</td></tr>{{ end }}
+          {{ if not .Bots }}<tr><td colspan="7" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无 Bot" "通过右上方按钮创建第一个推送 Bot。Token 会被加密保存。" "javascript:psgOpenDrawer('drawer-new-bot')" "立即创建") }}</td></tr>{{ end }}
         </tbody>
       </table>
     </div>
