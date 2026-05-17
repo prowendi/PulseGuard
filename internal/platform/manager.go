@@ -17,6 +17,30 @@ var ErrUnknownPlatform = errors.New("platform: unknown bot platform")
 // ErrManagerClosed is returned when Start is called after Shutdown.
 var ErrManagerClosed = errors.New("platform: manager closed")
 
+// ErrTokenInvalid is the platform-agnostic sentinel a Listener returns
+// from Run when the upstream credentials are permanently invalid (e.g.
+// Telegram 401 Unauthorized). The Manager observes this with
+// errors.Is and routes it through OnTokenInvalid so the runtime can
+// flip bots.enabled=false. Concrete adapters (e.g. telegram) alias
+// their own package-level sentinel to this value so callers can keep
+// using the adapter-specific name without coupling adapter packages
+// to the Manager.
+var ErrTokenInvalid = errors.New("platform: bot token invalid")
+
+// TokenInvalidCallback is invoked when a listener exits with a
+// platform-specific "token invalid" sentinel (currently
+// telegram.ErrTokenInvalid). The runtime wires this to SetEnabled(false)
+// so an upstream-revoked token automatically pauses the bot instead of
+// dumping retries into the log.
+//
+// The callback runs synchronously inside the Manager's listener
+// goroutine after the listener has already returned, so implementations
+// must be cheap and non-blocking (do a single DB UPDATE + a log line).
+// Errors from the callback are not surfaced — the bot is already off
+// the rails; the callback's job is to record the new state and let
+// the operator pick it up from the UI.
+type TokenInvalidCallback func(ctx context.Context, bot *domain.Bot)
+
 // Manager owns one goroutine per active bot. Start spawns a listener,
 // Stop cancels it, Shutdown terminates every active listener. Start is
 // idempotent on a per-bot basis: calling Start with the same botID stops
@@ -25,8 +49,9 @@ var ErrManagerClosed = errors.New("platform: manager closed")
 //
 // Manager is safe for concurrent use by multiple goroutines.
 type Manager struct {
-	logger    *slog.Logger
-	factories map[string]Factory
+	logger          *slog.Logger
+	factories       map[string]Factory
+	onTokenInvalid  TokenInvalidCallback
 
 	mu     sync.Mutex
 	active map[int64]*entry
@@ -43,6 +68,10 @@ type entry struct {
 // NewManager constructs a Manager. factories is an open set of platform
 // adapters — pass one Factory per platform you intend to support. A nil
 // logger is replaced with a discarding logger so call sites stay terse.
+//
+// Use SetTokenInvalidCallback to register the 401-auto-disable hook
+// after construction (kept out of the variadic constructor signature so
+// existing callers in tests do not have to change).
 func NewManager(logger *slog.Logger, factories ...Factory) *Manager {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(discardWriter{}, nil))
@@ -59,6 +88,16 @@ func NewManager(logger *slog.Logger, factories ...Factory) *Manager {
 		factories: fm,
 		active:    map[int64]*entry{},
 	}
+}
+
+// SetTokenInvalidCallback installs the callback invoked when a listener
+// exits with a token-invalid sentinel (e.g. telegram.ErrTokenInvalid).
+// nil clears the hook. Safe to call before any Start; not safe to
+// race with concurrent listener termination — call it during wire-up.
+func (m *Manager) SetTokenInvalidCallback(cb TokenInvalidCallback) {
+	m.mu.Lock()
+	m.onTokenInvalid = cb
+	m.mu.Unlock()
 }
 
 // Start spawns (or restarts) the listener for the supplied bot. When a
@@ -195,7 +234,12 @@ func (m *Manager) IsRunning(botID int64) bool {
 }
 
 // run drives a single listener and guarantees the active map is cleaned
-// up on exit, regardless of how the listener terminates.
+// up on exit, regardless of how the listener terminates. When the
+// listener returns telegram.ErrTokenInvalid (or any other sentinel
+// future platforms wire in via the same path), the OnTokenInvalid
+// callback is invoked synchronously so the runtime can flip the DB
+// row to disabled before the goroutine releases its slot in the
+// active map.
 func (m *Manager) run(ctx context.Context, bot *domain.Bot, listener Listener, e *entry) {
 	defer close(e.done)
 	defer func() {
@@ -222,6 +266,21 @@ func (m *Manager) run(ctx context.Context, bot *domain.Bot, listener Listener, e
 		m.logger.Info("platform: listener exited",
 			"bot_id", bot.ID,
 			"platform", bot.Platform)
+	case errors.Is(err, ErrTokenInvalid):
+		m.logger.Warn("platform: listener exited with invalid token",
+			"bot_id", bot.ID,
+			"tenant_id", bot.TenantID,
+			"platform", bot.Platform)
+		m.mu.Lock()
+		cb := m.onTokenInvalid
+		m.mu.Unlock()
+		if cb != nil {
+			// Use a fresh context: the parent ctx may already be
+			// cancelled (Shutdown path), but the auto-disable update
+			// still needs to land. Operators tolerate a short blocking
+			// DB write here — the callback contract is "do one UPDATE".
+			cb(context.Background(), bot)
+		}
 	default:
 		m.logger.Warn("platform: listener exited with error",
 			"bot_id", bot.ID,

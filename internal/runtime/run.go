@@ -239,6 +239,26 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 		}
 	}
 	listenerMgr := platform.NewManager(logger, listenerFactories...)
+	// Auto-disable the bot row when its listener exits with
+	// telegram.ErrTokenInvalid (401). Without this hook a revoked
+	// token would loop forever, retrying at the Telegram backoff and
+	// flooding the warn log; with it the operator sees a paused bot
+	// in the UI and can rotate the token at leisure.
+	listenerMgr.SetTokenInvalidCallback(func(cbCtx context.Context, bot *domain.Bot) {
+		if err := bots.SetEnabled(cbCtx, bot.TenantID, bot.ID, false); err != nil {
+			logger.Warn("runtime: auto-disable failed after invalid token",
+				"bot_id", bot.ID,
+				"tenant_id", bot.TenantID,
+				"platform", bot.Platform,
+				"err", err.Error())
+			return
+		}
+		logger.Warn("runtime: bot auto-disabled due to invalid token",
+			"bot_id", bot.ID,
+			"tenant_id", bot.TenantID,
+			"platform", bot.Platform,
+			"bot_name", bot.Name)
+	})
 
 	// Boot a listener for every enabled bot already in the DB so a
 	// process restart resumes onboarding loops without operator action.

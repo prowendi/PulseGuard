@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -232,6 +233,83 @@ func TestRunBotListenerSurvivesRestart(t *testing.T) {
 	if sent.ChatID != -777 {
 		t.Fatalf("chat_id = %v want -777", sent.ChatID)
 	}
+}
+
+// TestRunBotListener_AutoDisableOn401 exercises the full 401-to-disabled
+// pipeline: the Telegram backend returns 401 on getUpdates → the
+// telegram listener returns ErrTokenInvalid → the platform Manager
+// invokes the runtime-injected OnTokenInvalid callback → the bot row
+// has enabled flipped to false. Operators see a paused bot in the UI
+// instead of an endless retry loop.
+func TestRunBotListener_AutoDisableOn401(t *testing.T) {
+	// Fake Telegram backend that always answers 401 on getUpdates.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/getUpdates") {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":401,"description":"Unauthorized"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	cfg := newTestConfig(t, "admin@example.com", "adminpass")
+	cfg.Telegram.APIBase = srv.URL
+
+	base, _, stop := startRuntimeWithBotListener(t, cfg, &fakeSender{}, srv.URL)
+	defer stop()
+
+	// Admin login.
+	c := httpClient(t)
+	loginBody := mustJSON(t, map[string]any{"email": "admin@example.com", "password": "adminpass"})
+	resp := postJSON(t, c, base+"/api/v1/auth/login", loginBody, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin login: %d body=%s", resp.StatusCode, readErr(resp))
+	}
+	resp.Body.Close()
+	csrf := jarCookie(t, c, base, "psg_csrf")
+
+	// Create a bot — manager spawns the listener which immediately
+	// hits 401 and exits with ErrTokenInvalid.
+	createBody := mustJSON(t, map[string]any{
+		"name":      "revoked-bot",
+		"bot_token": "444444:fakeRevokedToken",
+		"platform":  "telegram",
+	})
+	botResp := postJSON(t, c, base+"/api/v1/bots", createBody, csrf)
+	if botResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create bot: %d body=%s", botResp.StatusCode, readErr(botResp))
+	}
+	var created map[string]any
+	_ = json.NewDecoder(botResp.Body).Decode(&created)
+	botResp.Body.Close()
+	botID := int64(created["id"].(float64))
+	if enabled, _ := created["enabled"].(bool); !enabled {
+		t.Fatalf("created bot enabled = false on insert (want true)")
+	}
+
+	// Eventually the bot row flips to enabled=false via the
+	// OnTokenInvalid callback. We poll the GET API rather than the DB
+	// directly so the test exercises the same wire surface the UI
+	// observes.
+	eventually(t, 5*time.Second, func() bool {
+		req, _ := http.NewRequest(http.MethodGet,
+			base+"/api/v1/bots/"+strconv.FormatInt(botID, 10), nil)
+		gresp, err := c.Do(req)
+		if err != nil {
+			return false
+		}
+		defer gresp.Body.Close()
+		if gresp.StatusCode != http.StatusOK {
+			return false
+		}
+		var view map[string]any
+		if err := json.NewDecoder(gresp.Body).Decode(&view); err != nil {
+			return false
+		}
+		en, _ := view["enabled"].(bool)
+		return !en
+	})
 }
 
 // startRuntimeWithBotListener is like startRuntime but injects a

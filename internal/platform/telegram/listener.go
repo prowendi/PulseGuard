@@ -30,12 +30,16 @@ import (
 	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/wendi/pulseguard/internal/platform"
 )
 
 // ErrTokenInvalid signals Telegram returned 401 Unauthorized. The
 // Manager logs and stops the listener; an operator must rotate the
-// token before the bot listens again.
-var ErrTokenInvalid = errors.New("telegram: bot token invalid (401)")
+// token before the bot listens again. It is aliased to
+// platform.ErrTokenInvalid so the Manager (which lives in the parent
+// package and cannot import this one without a cycle) can match it
+// with errors.Is and route the bot through the 401-auto-disable hook.
+var ErrTokenInvalid = platform.ErrTokenInvalid
 
 // CommandDispatcher resolves and executes user-defined Starlark
 // commands. The Telegram listener calls Dispatch when it sees a

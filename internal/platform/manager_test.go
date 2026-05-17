@@ -378,3 +378,108 @@ func TestManager_StartDisabledTearsDownExisting(t *testing.T) {
 	}
 	eventually(t, 2*time.Second, func() bool { return !mgr.IsRunning(42) })
 }
+
+// TestManager_TokenInvalidCallback_FiresOn401 wires a fake listener that
+// returns the platform-level ErrTokenInvalid sentinel and asserts the
+// OnTokenInvalid callback is invoked with the same bot pointer. This
+// is the exact hook the runtime uses to flip bots.enabled=false after
+// a Telegram 401 (telegram.ErrTokenInvalid is aliased to this value).
+func TestManager_TokenInvalidCallback_FiresOn401(t *testing.T) {
+	l := newErrorListener(ErrTokenInvalid)
+	factory := &fakeFactory{
+		platform: domain.PlatformTelegram,
+		supplier: func(*domain.Bot) (Listener, error) { return l, nil },
+	}
+	mgr := NewManager(quietLogger(), factory)
+	t.Cleanup(mgr.Shutdown)
+
+	var (
+		mu      sync.Mutex
+		gotBot  *domain.Bot
+		fired   int
+	)
+	mgr.SetTokenInvalidCallback(func(_ context.Context, b *domain.Bot) {
+		mu.Lock()
+		defer mu.Unlock()
+		fired++
+		gotBot = b
+	})
+
+	bot := &domain.Bot{
+		ID: 99, TenantID: 7, Name: "revoked",
+		Platform: domain.PlatformTelegram, Enabled: true,
+	}
+	if err := mgr.Start(context.Background(), bot); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitClosed(t, l.started, "listener should start")
+	eventually(t, 2*time.Second, func() bool { return !mgr.IsRunning(99) })
+
+	// Callback runs synchronously inside the goroutine before the
+	// active map cleanup releases — by the time IsRunning is false
+	// the callback must have already been observed.
+	mu.Lock()
+	defer mu.Unlock()
+	if fired != 1 {
+		t.Fatalf("OnTokenInvalid fired %d times; want 1", fired)
+	}
+	if gotBot == nil || gotBot.ID != 99 || gotBot.TenantID != 7 {
+		t.Fatalf("callback got bot = %+v want id=99 tenant=7", gotBot)
+	}
+}
+
+// TestManager_TokenInvalidCallback_NotFiredOnOtherErrors guards against
+// classifying every error as a token-invalid signal. Any non-sentinel
+// error must take the generic "exited with error" branch and skip the
+// callback so unrelated network blips do not flip enabled=false.
+func TestManager_TokenInvalidCallback_NotFiredOnOtherErrors(t *testing.T) {
+	l := newErrorListener(errors.New("transient backend boom"))
+	factory := &fakeFactory{
+		platform: domain.PlatformTelegram,
+		supplier: func(*domain.Bot) (Listener, error) { return l, nil },
+	}
+	mgr := NewManager(quietLogger(), factory)
+	t.Cleanup(mgr.Shutdown)
+
+	var fired int32
+	mgr.SetTokenInvalidCallback(func(_ context.Context, _ *domain.Bot) {
+		atomic.AddInt32(&fired, 1)
+	})
+
+	bot := &domain.Bot{
+		ID: 1, TenantID: 1, Name: "x",
+		Platform: domain.PlatformTelegram, Enabled: true,
+	}
+	if err := mgr.Start(context.Background(), bot); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitClosed(t, l.started, "listener should start")
+	eventually(t, 2*time.Second, func() bool { return !mgr.IsRunning(1) })
+
+	if got := atomic.LoadInt32(&fired); got != 0 {
+		t.Fatalf("OnTokenInvalid fired %d times for non-sentinel error; want 0", got)
+	}
+}
+
+// TestManager_TokenInvalidCallback_NilCallbackIsSafe ensures that when
+// no callback is registered (e.g. test wire-ups), the 401 path still
+// cleans up the active map and does not panic.
+func TestManager_TokenInvalidCallback_NilCallbackIsSafe(t *testing.T) {
+	l := newErrorListener(ErrTokenInvalid)
+	factory := &fakeFactory{
+		platform: domain.PlatformTelegram,
+		supplier: func(*domain.Bot) (Listener, error) { return l, nil },
+	}
+	mgr := NewManager(quietLogger(), factory)
+	t.Cleanup(mgr.Shutdown)
+
+	bot := &domain.Bot{
+		ID: 5, TenantID: 1, Name: "x",
+		Platform: domain.PlatformTelegram, Enabled: true,
+	}
+	if err := mgr.Start(context.Background(), bot); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitClosed(t, l.started, "listener should start")
+	eventually(t, 2*time.Second, func() bool { return !mgr.IsRunning(5) })
+}
