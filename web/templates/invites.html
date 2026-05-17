@@ -6,10 +6,10 @@
       <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">邀请码 <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 ring-1 ring-amber-100 align-middle" title="管理员">admin · 管理员</span></h1>
       <p class="mt-1 text-sm text-slate-500">一次最多生成 100 张；TTL 为 0 表示永不过期。</p>
     </div>
-    <a href="#new-inv" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
+    <button type="button" onclick="psgOpenDrawer('drawer-new-inv')" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       生成邀请码
-    </a>
+    </button>
   </header>
 
   <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
@@ -46,18 +46,27 @@
             </td>
           </tr>
           {{ end }}
-          {{ if not .Invites }}<tr><td colspan="7" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无邀请码" "在下方表单批量生成，分发给希望加入的同事或客户。" "#new-inv" "立即生成") }}</td></tr>{{ end }}
+          {{ if not .Invites }}<tr><td colspan="7" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无邀请码" "点击右上方按钮批量生成，分发给希望加入的同事或客户。" "javascript:psgOpenDrawer('drawer-new-inv')" "立即生成") }}</td></tr>{{ end }}
         </tbody>
       </table>
     </div>
   </section>
+</div>
 
-  <section id="new-inv" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
-    <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
-      <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">生成邀请码</h2>
-      <p class="mt-0.5 text-[12px] text-slate-500">建议设置过期时间以避免邀请码泄露后被恶意使用。</p>
+<!-- Drawer: 生成邀请码 ================================================ -->
+<div id="drawer-new-inv" class="psg-drawer fixed inset-0 z-40 hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-new-inv-title">
+  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" onclick="psgCloseDrawer('drawer-new-inv')"></div>
+  <div class="psg-drawer-panel absolute top-0 right-0 h-full w-full max-w-md bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col translate-x-full transition-transform duration-300 ease-out dark:bg-slate-900 dark:ring-white/10">
+    <header class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div>
+        <h2 id="drawer-new-inv-title" class="text-base font-semibold text-slate-900 dark:text-white">生成邀请码</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">建议设置 TTL 以避免泄露后被恶意使用。</p>
+      </div>
+      <button type="button" onclick="psgCloseDrawer('drawer-new-inv')" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
     </header>
-    <form method="POST" action="/ui/invites" class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+    <form method="POST" action="/ui/invites" class="flex-1 overflow-y-auto p-6 space-y-4">
       <input type="hidden" name="csrf" value="{{ .CSRF }}">
       <div class="psg-float-wrap">
         <input type="number" id="ivc" name="count" value="1" min="1" max="100" placeholder="1" class="psg-float-input">
@@ -67,12 +76,13 @@
         <input type="number" id="ivt" name="ttl_seconds" value="0" min="0" placeholder="0" class="psg-float-input">
         <label for="ivt" class="psg-float-label">TTL 秒 (0 = 永久)</label>
       </div>
-      <div class="sm:col-span-2 pt-2">
+      <div class="pt-2 flex items-center gap-2">
         <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">生成邀请码
           <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
         </button>
+        <button type="button" onclick="psgCloseDrawer('drawer-new-inv')" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
       </div>
     </form>
-  </section>
+  </div>
 </div>
 {{ template "layout-close" . }}{{ end }}
