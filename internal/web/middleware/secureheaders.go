@@ -20,7 +20,12 @@ func SecureHeaders(secure bool) func(http.Handler) http.Handler {
 			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 			h.Set("Content-Security-Policy",
 				"default-src 'self'; "+
-					"script-src 'self'; "+
+					// 'unsafe-inline' is a transitional concession so the
+					// existing onclick="..." event handlers in our HTMX-light
+					// templates keep working. The follow-up commit replaces
+					// every inline handler with addEventListener+data-action
+					// so we can drop 'unsafe-inline' and harden CSP again.
+					"script-src 'self' 'unsafe-inline'; "+
 					"style-src 'self' 'unsafe-inline'; "+
 					"img-src 'self' data:; "+
 					"connect-src 'self'; "+
