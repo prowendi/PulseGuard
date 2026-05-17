@@ -65,8 +65,8 @@
                       data-platform="{{ .Platform }}"
                       data-bot-kind="{{ .BotKind }}"
                       data-app-id="{{ .AppID }}"
-                      data-verify-token="{{ .VerifyToken }}"
-                      data-encrypt-key="{{ .EncryptKey }}"
+                      data-verify-token-set="{{ if .VerifyTokenSet }}1{{ else }}0{{ end }}"
+                      data-encrypt-key-set="{{ if .EncryptKeySet }}1{{ else }}0{{ end }}"
                       class="inline-flex items-center gap-1 text-[12.5px] text-emerald-600 hover:text-emerald-700 font-medium hover:bg-emerald-50 px-2 py-1 rounded transition-colors dark:hover:bg-emerald-500/10">编辑</button>
               <form method="POST" action="/ui/bots/{{ .ID }}/delete" data-confirm="确认删除？此操作不可撤销。" class="inline ml-1">
                 <input type="hidden" name="csrf" value="{{ $csrf }}">
@@ -219,11 +219,11 @@
           <label for="bea_sec" class="psg-float-label">App Secret（可选）</label>
         </div>
         <div class="psg-float-wrap">
-          <input type="text" id="bea_vt" name="verify_token" placeholder="Verification Token" class="psg-float-input font-mono">
+          <input type="password" id="bea_vt" name="verify_token" placeholder="留空 = 不修改 Verify Token" class="psg-float-input font-mono">
           <label for="bea_vt" class="psg-float-label">Verify Token（可选）</label>
         </div>
         <div class="psg-float-wrap">
-          <input type="text" id="bea_ek" name="encrypt_key" placeholder="Encrypt Key" class="psg-float-input font-mono">
+          <input type="password" id="bea_ek" name="encrypt_key" placeholder="留空 = 不修改 Encrypt Key" class="psg-float-input font-mono">
           <label for="bea_ek" class="psg-float-label">Encrypt Key</label>
         </div>
       </div>

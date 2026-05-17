@@ -51,11 +51,15 @@ func TestBotsAPI_CreateLarkAppBot(t *testing.T) {
 	if created.AppID != "cli_a1b2c3d4e5f6" {
 		t.Fatalf("AppID = %q", created.AppID)
 	}
-	if created.VerifyToken != "vt-LB7" {
-		t.Fatalf("VerifyToken = %q", created.VerifyToken)
+	// SEC-1: verify_token and encrypt_key are never returned in the
+	// clear — only their boolean *_set fields surface. The plaintexts
+	// stay server-side once stored so a stolen session can't forge
+	// inbound Lark events.
+	if !created.VerifyTokenSet {
+		t.Fatalf("VerifyTokenSet = false (want true after providing verify_token)")
 	}
-	if created.EncryptKey != "ek-LB7" {
-		t.Fatalf("EncryptKey = %q", created.EncryptKey)
+	if !created.EncryptKeySet {
+		t.Fatalf("EncryptKeySet = false (want true after providing encrypt_key)")
 	}
 	if !created.AppSecretSet {
 		t.Fatalf("AppSecretSet = false (want true)")
@@ -299,16 +303,22 @@ func TestUIBots_AppRowEditButtonCarriesKindAndIDs(t *testing.T) {
 	must := []string{
 		`data-bot-kind="app"`,
 		`data-app-id="cli_editme9876"`,
-		`data-verify-token="edit-vt"`,
-		`data-encrypt-key="edit-ek"`,
+		// SEC-1: only the *_set booleans surface in the DOM; the
+		// plaintext verify_token / encrypt_key stay server-side. The
+		// edit drawer pre-fills these fields blank, and the backend
+		// treats blank-on-update as "keep current".
+		`data-verify-token-set="1"`,
+		`data-encrypt-key-set="1"`,
 	}
 	for _, s := range must {
 		if !strings.Contains(body, s) {
 			t.Errorf("missing edit-row attr %q", s)
 		}
 	}
-	// Secret MUST NOT be in the DOM.
-	if strings.Contains(body, "edit-sec") {
-		t.Fatalf("app_secret leaked into HTML")
+	// Secrets MUST NOT be in the DOM (SEC-1 + existing app_secret rule).
+	for _, leak := range []string{"edit-sec", "edit-vt", "edit-ek"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("plaintext secret %q leaked into HTML", leak)
+		}
 	}
 }

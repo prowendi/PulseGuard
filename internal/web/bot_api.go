@@ -25,26 +25,33 @@ import (
 // indicator (green/yellow/red/gray) plus a tooltip without a second
 // round-trip.
 //
-// LB7 adds bot_kind ("webhook" | "app") and the public app_id /
-// verify_token / encrypt_key fields for lark application bots. The
-// app_secret is intentionally NEVER returned — only its presence is
-// surfaced via the boolean app_secret_set so the UI can show "已配置"
-// without echoing the plaintext.
+// LB7 adds bot_kind ("webhook" | "app") and the public app_id field
+// for lark application bots. SEC-1 (2026-05): app_secret, verify_token,
+// AND encrypt_key are all withheld from API responses — only the
+// boolean *_set fields surface so the UI can show "已配置" without
+// echoing the plaintext.
+//
+// encrypt_key is the HMAC signing secret for inbound Lark events; if
+// it leaks an attacker can forge events. verify_token is the URL-
+// verification handshake secret. Both must stay server-side once
+// stored. The PUT endpoint accepts the plaintext (operator pasting
+// from the Lark console) and supports "blank = keep current"
+// semantics — operators editing other fields don't need to re-paste.
 type botView struct {
-	ID            int64         `json:"id"`
-	Name          string        `json:"name"`
-	Platform      string        `json:"platform"`
-	BotKind       string        `json:"bot_kind"`
-	Description   string        `json:"description,omitempty"`
-	BotTokenLast4 string        `json:"bot_token_last4"`
-	Enabled       bool          `json:"enabled"`
-	AppID         string        `json:"app_id,omitempty"`
-	VerifyToken   string        `json:"verify_token,omitempty"`
-	EncryptKey    string        `json:"encrypt_key,omitempty"`
-	AppSecretSet  bool          `json:"app_secret_set"`
-	CreatedAt     string        `json:"created_at"`
-	UpdatedAt     string        `json:"updated_at"`
-	Health        botHealthView `json:"health"`
+	ID              int64         `json:"id"`
+	Name            string        `json:"name"`
+	Platform        string        `json:"platform"`
+	BotKind         string        `json:"bot_kind"`
+	Description     string        `json:"description,omitempty"`
+	BotTokenLast4   string        `json:"bot_token_last4"`
+	Enabled         bool          `json:"enabled"`
+	AppID           string        `json:"app_id,omitempty"`
+	VerifyTokenSet  bool          `json:"verify_token_set"`
+	EncryptKeySet   bool          `json:"encrypt_key_set"`
+	AppSecretSet    bool          `json:"app_secret_set"`
+	CreatedAt       string        `json:"created_at"`
+	UpdatedAt       string        `json:"updated_at"`
+	Health          botHealthView `json:"health"`
 }
 
 // botHealthView is the JSON projection of platform.BotHealth. Times
@@ -128,20 +135,20 @@ func toBotViewWithHealth(b *domain.Bot, h platform.BotHealth, now time.Time) bot
 		last4 = ""
 	}
 	return botView{
-		ID:            b.ID,
-		Name:          b.Name,
-		Platform:      b.Platform,
-		BotKind:       kind,
-		Description:   b.Description,
-		BotTokenLast4: last4,
-		Enabled:       b.Enabled,
-		AppID:         b.AppID,
-		VerifyToken:   b.VerifyToken,
-		EncryptKey:    b.EncryptKey,
-		AppSecretSet:  b.AppSecret != "",
-		CreatedAt:     b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:     b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		Health:        hv,
+		ID:             b.ID,
+		Name:           b.Name,
+		Platform:       b.Platform,
+		BotKind:        kind,
+		Description:    b.Description,
+		BotTokenLast4:  last4,
+		Enabled:        b.Enabled,
+		AppID:          b.AppID,
+		VerifyTokenSet: b.VerifyToken != "",
+		EncryptKeySet:  b.EncryptKey != "",
+		AppSecretSet:   b.AppSecret != "",
+		CreatedAt:      b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:      b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		Health:         hv,
 	}
 }
 
@@ -386,10 +393,25 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 			existing.AppSecret = strings.TrimSpace(*p.AppSecret)
 		}
 		if p.VerifyToken != nil {
-			existing.VerifyToken = strings.TrimSpace(*p.VerifyToken)
+			// SEC-1: "blank = keep current" semantics for the verify_token
+			// just like AppSecret above. A nil pointer means "field omitted
+			// from request", and now an empty string also means "operator
+			// did not re-paste it" — only a non-empty value rotates the
+			// secret. This pairs with the API never returning the existing
+			// value, so the edit drawer pre-fills blank and the operator
+			// can leave it blank to preserve.
+			if tok := strings.TrimSpace(*p.VerifyToken); tok != "" {
+				existing.VerifyToken = tok
+			}
 		}
 		if p.EncryptKey != nil {
-			existing.EncryptKey = strings.TrimSpace(*p.EncryptKey)
+			// SEC-1: same "blank = keep" rule as verify_token. encrypt_key
+			// is the HMAC signing secret for inbound Lark events; we never
+			// return it, so the edit UI cannot re-submit the existing
+			// value and an empty string must mean "do not rotate".
+			if tok := strings.TrimSpace(*p.EncryptKey); tok != "" {
+				existing.EncryptKey = tok
+			}
 		}
 		if p.BotToken != nil {
 			tok := strings.TrimSpace(*p.BotToken)

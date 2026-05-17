@@ -236,19 +236,24 @@ func validateCommand(c *domain.Command) error {
 // without it a tenant could attach a command to another tenant's bot
 // by supplying its raw id, and the FK alone would happily allow it
 // (FKs check bot existence, not tenant ownership).
+//
+// SEC-3 (2026-05): returns domain.ErrNotFound (NOT ErrValidation) for
+// both "unknown id" and "cross-tenant" cases. The bot is invisible to
+// the calling tenant either way, so the API maps it to a uniform 404
+// and never echoes the bot id back to the client. Echoing the bot id
+// would leak the existence of other tenants' resources to enumeration.
 func (r *CommandRepo) ensureBotOwnership(ctx context.Context, tenantID, botID int64) error {
 	var ownerTenant int64
 	err := r.db.QueryRowContext(ctx,
 		`SELECT tenant_id FROM bots WHERE id = ?`, botID).Scan(&ownerTenant)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: bot %d not found", domain.ErrValidation, botID)
+		return domain.ErrNotFound
 	}
 	if err != nil {
 		return fmt.Errorf("verify bot ownership: %w", err)
 	}
 	if ownerTenant != tenantID {
-		return fmt.Errorf("%w: bot %d does not belong to tenant %d",
-			domain.ErrValidation, botID, tenantID)
+		return domain.ErrNotFound
 	}
 	return nil
 }

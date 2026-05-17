@@ -114,7 +114,7 @@ func TestLarkEvents_DispatchSlashCommandReplies(t *testing.T) {
 	seedLarkCommand(t, h, bot, "/echo", "def handle(args):\n    return \"echo: \" + \" \".join(args)\n")
 
 	body := makeLarkMessageEvent("cli_dispatch", "oc_chat_abc", "/echo hello world")
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("enc-dispatch", ts, nonce, body)
 
@@ -155,7 +155,7 @@ func TestLarkEvents_NonSlashAcksWithoutReply(t *testing.T) {
 	fs := installFakeSender(t, h)
 	seedLarkAppBot(t, h, "cli_plain", "k-plain", true)
 	body := makeLarkMessageEvent("cli_plain", "oc_x", "hello, just chatting")
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("k-plain", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)
@@ -179,7 +179,7 @@ func TestLarkEvents_UnknownCommandStaysSilent(t *testing.T) {
 	fs := installFakeSender(t, h)
 	seedLarkAppBot(t, h, "cli_unknown", "k-unknown", true)
 	body := makeLarkMessageEvent("cli_unknown", "oc_x", "/notdefined")
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("k-unknown", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)
@@ -205,7 +205,7 @@ func TestLarkEvents_SubscriberUpsertedOnDispatch(t *testing.T) {
 	cmd := seedLarkCommand(t, h, bot, "/ping", "def handle(args):\n    return \"pong\"\n")
 
 	body := makeLarkMessageEvent("cli_sub", "oc_sub_chat", "/ping")
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("k", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)
@@ -331,7 +331,7 @@ func TestLarkEvents_NoExecutorStaysSilent(t *testing.T) {
 	h.cleanup = append(h.cleanup, func() { h.server.Close() })
 
 	body := makeLarkMessageEvent("cli_noexec", "oc_noexec", "/noop")
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("k-noexec", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)
@@ -358,7 +358,7 @@ func TestLarkEvents_ScriptFailureFriendlyReply(t *testing.T) {
 	seedLarkCommand(t, h, bot, "/boom", "def handle(args):\n    return undefined_symbol\n")
 
 	body := makeLarkMessageEvent("cli_fail", "oc_fail", "/boom arg1")
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("k-fail", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)

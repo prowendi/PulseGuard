@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wendi/pulseguard/internal/domain"
@@ -75,6 +76,10 @@ func TestCommandRepo_SameNameDifferentBotsAllowed(t *testing.T) {
 // TestCommandRepo_RejectsCrossTenantBot guards the ensureBotOwnership
 // check: attaching a command to a bot owned by a different tenant
 // must fail loudly even if the FK alone would allow it.
+//
+// SEC-3: the response is ErrNotFound (not ErrValidation) so the API
+// surfaces "404 not found" rather than echoing the bot id back to
+// the caller — cross-tenant resources are invisible to enumeration.
 func TestCommandRepo_RejectsCrossTenantBot(t *testing.T) {
 	f, repo := newCommandFixture(t)
 	tn2 := makeTenant("other@x.com")
@@ -87,8 +92,20 @@ func TestCommandRepo_RejectsCrossTenantBot(t *testing.T) {
 	}
 	c := makeCommand(f.tenant.ID, otherBot.ID, "/x")
 	err := repo.Insert(context.Background(), c)
-	if !errors.Is(err, domain.ErrValidation) {
-		t.Fatalf("cross-tenant bot id should reject as ErrValidation, got %v", err)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cross-tenant bot id should reject as ErrNotFound, got %v", err)
+	}
+	// Defence-in-depth: the error message MUST NOT include the bot id
+	// — that would let attackers enumerate other tenants' bots via
+	// timing or response inspection.
+	if err != nil && (strings.Contains(err.Error(), "bot") || strings.Contains(err.Error(), "tenant")) {
+		// errors wrapped with %w only — domain.ErrNotFound itself is
+		// just "not found", so this should hold.
+		// Allow the bare sentinel ("not found"); reject if the message
+		// has been re-wrapped with id info.
+		if err.Error() != domain.ErrNotFound.Error() {
+			t.Fatalf("error message leaks identifiers: %q", err.Error())
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
 	"sort"
 	"strings"
 
@@ -51,6 +52,9 @@ func MigrateFS(ctx context.Context, db *sql.DB, src fs.FS, dir string, clock dom
 		if applied[f.version] {
 			continue
 		}
+		if err := guardDestructiveMigration(ctx, db, f.version); err != nil {
+			return err
+		}
 		body, err := fs.ReadFile(src, dir+"/"+f.name)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", f.name, err)
@@ -58,6 +62,49 @@ func MigrateFS(ctx context.Context, db *sql.DB, src fs.FS, dir string, clock dom
 		if err := runMigration(ctx, db, clock, f.version, string(body)); err != nil {
 			return fmt.Errorf("migration %d (%s): %w", f.version, f.name, err)
 		}
+	}
+	return nil
+}
+
+// guardDestructiveMigration is the SEC-2 safety net: a few migrations
+// (notably 0011) are documented as destructive to align dev databases
+// with new schema. Running them in a production DB that has live data
+// would silently wipe customer rows. We refuse to apply such a
+// migration unless either:
+//
+//   1. the target table is empty (nothing to wipe → safe to proceed),
+//   2. or PULSEGUARD_DEV_RESET=1 is set in the environment
+//      (operator opts in explicitly).
+//
+// The guard is a runtime check on the live DB — it cannot be removed
+// by editing the .sql file because the .sql doesn't carry the
+// invariant. Add new versions to this switch only when a migration is
+// genuinely destructive; benign migrations should not appear here.
+func guardDestructiveMigration(ctx context.Context, db *sql.DB, version int) error {
+	switch version {
+	case 11:
+		// 0011 drops commands and wipes subscribers. Block when either
+		// table has rows unless explicitly opted in.
+		var cmds, subs int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM commands`).Scan(&cmds); err != nil {
+			// Table might not exist yet (fresh DB jumping forward). Treat
+			// missing table as empty — the migration will create it.
+			cmds = 0
+		}
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM subscribers`).Scan(&subs); err != nil {
+			subs = 0
+		}
+		if cmds == 0 && subs == 0 {
+			return nil
+		}
+		if os.Getenv("PULSEGUARD_DEV_RESET") == "1" {
+			return nil
+		}
+		return fmt.Errorf(
+			"migration 11 (commands_bind_to_bot) would WIPE %d command rows and %d subscriber rows; "+
+				"set PULSEGUARD_DEV_RESET=1 to acknowledge the destructive change, "+
+				"or roll back to a binary that doesn't include this migration",
+			cmds, subs)
 	}
 	return nil
 }

@@ -4,12 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
 )
+
+// freshLarkTimestamp returns a current Unix-epoch timestamp string as
+// Lark sends in the X-Lark-Request-Timestamp header. SEC-5 added a
+// ±5min freshness window on the events endpoint; tests must use a
+// recent timestamp or the request is rejected as stale.
+func freshLarkTimestamp() string {
+	return strconv.FormatInt(time.Now().Unix(), 10)
+}
 
 // seedLarkAppBot inserts a tenant + a Lark application bot with the
 // supplied credentials so the LB5 events endpoint can resolve and
@@ -98,7 +109,7 @@ func TestLarkEvents_SignatureValid(t *testing.T) {
 	seedLarkAppBot(t, h, "cli_known_app", "enc-key-LB5", true)
 
 	body := []byte(`{"schema":"2.0","header":{"event_id":"e1","event_type":"im.message.receive_v1","app_id":"cli_known_app","tenant_key":"tk","create_time":"0","token":"t"},"event":{}}`)
-	ts := "1700000000"
+	ts := freshLarkTimestamp()
 	nonce := "nonce-lb5"
 	sig := ComputeLarkSignature("enc-key-LB5", ts, nonce, body)
 
@@ -120,7 +131,7 @@ func TestLarkEvents_SignatureMismatch(t *testing.T) {
 	seedLarkAppBot(t, h, "cli_known_app", "enc-key-LB5", true)
 
 	body := []byte(`{"schema":"2.0","header":{"app_id":"cli_known_app","event_type":"x"},"event":{}}`)
-	ts := "1700000000"
+	ts := freshLarkTimestamp()
 	nonce := "nonce-x"
 	// Compute a signature for DIFFERENT body, then send the original.
 	wrongSig := ComputeLarkSignature("enc-key-LB5", ts, nonce, []byte("DIFFERENT"))
@@ -162,14 +173,18 @@ func TestLarkEvents_MissingSignatureHeaders(t *testing.T) {
 	}
 }
 
-// TestLarkEvents_UnknownAppID returns 404 so the operator who pasted
-// the wrong URL into the wrong Lark app sees a precise error.
+// TestLarkEvents_UnknownAppID returns a uniform 401 — SEC-4 collapsed
+// the previous 404 "not found" path into 401 UNAUTHENTICATED so an
+// attacker cannot distinguish "unknown app_id" from "bad signature"
+// from "missing key" via response code enumeration. The internal
+// reason ("bot resolve/enabled/key check failed") is logged but never
+// echoed.
 func TestLarkEvents_UnknownAppID(t *testing.T) {
 	h := newTestHarness(t)
 	// Seed a different app_id — body claims an unknown one.
 	seedLarkAppBot(t, h, "cli_real_app", "key", true)
 	body := []byte(`{"schema":"2.0","header":{"app_id":"cli_NOT_KNOWN","event_type":"x"},"event":{}}`)
-	ts := "1700000000"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("key", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)
@@ -178,18 +193,27 @@ func TestLarkEvents_UnknownAppID(t *testing.T) {
 		t.Fatalf("do: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d want 404 body=%s", resp.StatusCode, drain(resp))
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d want 401 body=%s", resp.StatusCode, drain(resp))
+	}
+	// The response body MUST NOT betray which app_ids exist — the
+	// message is generic for every auth failure mode.
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(bodyBytes), "cli_NOT_KNOWN") ||
+		strings.Contains(string(bodyBytes), "cli_real_app") {
+		t.Fatalf("response leaks app_id details: %s", bodyBytes)
 	}
 }
 
-// TestLarkEvents_DisabledBotReturns410 lets the operator see why their
-// disabled bot stopped receiving events without a silent drop.
+// TestLarkEvents_DisabledBotReturns401 (renamed from ...Returns410):
+// SEC-4 collapsed the disabled-bot path into the same uniform 401 as
+// unknown-app_id, so an attacker cannot tell which bots are paused
+// versus never existed.
 func TestLarkEvents_DisabledBotReturns410(t *testing.T) {
 	h := newTestHarness(t)
 	seedLarkAppBot(t, h, "cli_paused", "enc-key", false)
 	body := []byte(`{"schema":"2.0","header":{"app_id":"cli_paused","event_type":"x"},"event":{}}`)
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("enc-key", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)
@@ -198,8 +222,8 @@ func TestLarkEvents_DisabledBotReturns410(t *testing.T) {
 		t.Fatalf("do: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusGone {
-		t.Fatalf("status = %d want 410", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d want 401 (SEC-4 unified auth response)", resp.StatusCode)
 	}
 }
 
@@ -246,7 +270,7 @@ func TestLarkEvents_V1AppIDExtraction(t *testing.T) {
 	h := newTestHarness(t)
 	seedLarkAppBot(t, h, "cli_v1_app", "key-v1", true)
 	body := []byte(`{"type":"event_callback","event":{"app_id":"cli_v1_app","type":"message"}}`)
-	ts := "1"
+	ts := freshLarkTimestamp()
 	nonce := "n"
 	sig := ComputeLarkSignature("key-v1", ts, nonce, body)
 	req := makeLarkReq(t, h, body, ts, nonce, sig)

@@ -42,7 +42,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/wendi/pulseguard/internal/domain"
@@ -157,34 +159,35 @@ func apiLarkEvents(deps Deps) http.HandlerFunc {
 		// scoped by app_id; Lark guarantees one app per (event_id, app_id)
 		// triple so the tenant-blind ListAll scan is correct (and
 		// O(bots), which at our scale is in the low hundreds).
+		//
+		// SEC-4 (2026-05): every authentication-stage failure path
+		// — unknown bot, disabled bot, bot missing encrypt_key,
+		// missing headers, signature mismatch, stale timestamp — must
+		// return the SAME response shape (401 UNAUTHENTICATED with
+		// generic body). Distinguishing 404 / 410 / 412 lets an
+		// attacker enumerate which Lark app_ids are registered on this
+		// PulseGuard instance and which of them have signing keys.
+		// The internal reason is logged server-side but never echoed.
 		appID, ok := extractAppID(body)
 		if !ok || appID == "" {
 			writeError(w, r, http.StatusBadRequest, "VALIDATION",
 				"lark event missing app_id")
 			return
 		}
-		bot, err := findLarkAppBot(r, deps, appID)
-		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				// Unknown bot — return 404 (operator pasted the URL
-				// into a Lark app whose credentials are not in PulseGuard).
-				writeError(w, r, http.StatusNotFound, "NOT_FOUND",
-					"no PulseGuard bot configured for this app_id")
-				return
-			}
-			writeInternal(w, r, deps, "lark events: bot lookup", err)
+		bot, lookupErr := findLarkAppBot(r, deps, appID)
+		if lookupErr != nil && !errors.Is(lookupErr, domain.ErrNotFound) {
+			writeInternal(w, r, deps, "lark events: bot lookup", lookupErr)
 			return
 		}
-		if !bot.Enabled {
-			writeError(w, r, http.StatusGone, "BOT_DISABLED", "bot disabled")
-			return
-		}
-		if bot.EncryptKey == "" {
-			// A bot row that exists but has no encrypt_key cannot
-			// authenticate any inbound event. Reject with 412 so the
-			// operator sees a precise error in Lark's developer console.
-			writeError(w, r, http.StatusPreconditionFailed, "VALIDATION",
-				"bot has no encrypt_key configured")
+		// Past this point we collapse every reachable auth failure
+		// into a single response. rejectAuth logs the reason but emits
+		// a uniform 401 to the wire.
+		if bot == nil || !bot.Enabled || bot.EncryptKey == "" {
+			rejectLarkAuth(w, r, deps, "bot resolve/enabled/key check failed",
+				"app_id", appID,
+				"bot_nil", bot == nil,
+				"enabled", bot != nil && bot.Enabled,
+				"encrypt_key_set", bot != nil && bot.EncryptKey != "")
 			return
 		}
 
@@ -193,13 +196,23 @@ func apiLarkEvents(deps Deps) http.HandlerFunc {
 		tsHeader := r.Header.Get(LarkTimestampHeader)
 		nonceHeader := r.Header.Get(LarkNonceHeader)
 		if sigHeader == "" || tsHeader == "" || nonceHeader == "" {
-			writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED",
-				"missing lark signature headers")
+			rejectLarkAuth(w, r, deps, "missing signature headers",
+				"bot_id", bot.ID)
+			return
+		}
+		// SEC-5: reject events whose timestamp is more than 5 minutes
+		// off from server clock. Without this an attacker who once
+		// captured a valid signed request could replay it forever; with
+		// it, a replay window only exists for the time the signature
+		// is fresh. Lark's docs recommend the same 5-minute bound.
+		if !isLarkTimestampFresh(tsHeader, deps) {
+			rejectLarkAuth(w, r, deps, "stale or invalid timestamp",
+				"bot_id", bot.ID, "timestamp", tsHeader)
 			return
 		}
 		if !verifyLarkSignature(bot.EncryptKey, tsHeader, nonceHeader, body, sigHeader) {
-			writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED",
-				"lark signature mismatch")
+			rejectLarkAuth(w, r, deps, "signature mismatch",
+				"bot_id", bot.ID)
 			return
 		}
 
@@ -536,3 +549,49 @@ func stitchScriptResult(r *scripting.Result) string {
 // unused but referenced for future expansion. Keeps the lark import
 // alive without sprinkling underscore-imports elsewhere.
 var _ = lark.LarkAppTokenPrefix
+
+// LarkEventTimestampSkew bounds how far an X-Lark-Request-Timestamp
+// header may diverge from server clock before we reject the event.
+// 5 minutes matches the Lark documented recommendation and is large
+// enough to tolerate operator clock skew without giving an attacker
+// who once captured a valid signed request a forever-replay window.
+const LarkEventTimestampSkew = 5 * time.Minute
+
+// isLarkTimestampFresh validates the X-Lark-Request-Timestamp header
+// against the server clock with the documented ±LarkEventTimestampSkew
+// window. Returns false for missing, malformed, or out-of-window
+// timestamps so the caller can reject with a uniform 401.
+//
+// deps is plumbed so future clock injection (for tests) can come
+// through without rewriting callers; today we use time.Now().
+func isLarkTimestampFresh(tsHeader string, _ Deps) bool {
+	if tsHeader == "" {
+		return false
+	}
+	tsInt, err := strconv.ParseInt(strings.TrimSpace(tsHeader), 10, 64)
+	if err != nil || tsInt <= 0 {
+		return false
+	}
+	delta := time.Since(time.Unix(tsInt, 0))
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= LarkEventTimestampSkew
+}
+
+// rejectLarkAuth emits a uniform 401 UNAUTHENTICATED response and
+// records the actual reason in server logs. SEC-4: every authentication
+// failure on the events endpoint MUST produce the same wire response
+// so an attacker cannot enumerate which app_ids exist, which are
+// enabled, which have signing keys configured, or which signatures
+// were close-but-wrong. The internal reason + structured fields stay
+// in the operator log for diagnostics.
+func rejectLarkAuth(w http.ResponseWriter, r *http.Request, deps Deps, reason string, kv ...any) {
+	if deps.Logger != nil {
+		args := []any{"endpoint", "/api/v1/lark/events", "reason", reason}
+		args = append(args, kv...)
+		deps.Logger.Info("lark events: authentication rejected", args...)
+	}
+	writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED",
+		"lark event authentication failed")
+}

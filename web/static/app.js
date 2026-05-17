@@ -404,8 +404,13 @@
           setBot('[name="bot_token"]', ""); // explicit blank = keep token
           setBot('[name="app_id"]', node.getAttribute("data-app-id"));
           setBot('[name="app_secret"]', ""); // explicit blank = keep secret
-          setBot('[name="verify_token"]', node.getAttribute("data-verify-token"));
-          setBot('[name="encrypt_key"]', node.getAttribute("data-encrypt-key"));
+          // SEC-1: encrypt_key and verify_token are NEVER returned by
+          // the API, so the edit drawer pre-fills these fields blank.
+          // The server treats blank-on-update as "keep current value",
+          // letting operators edit other fields without re-pasting the
+          // secret. Visual cue is the placeholder text "留空 = 不修改".
+          setBot('[name="verify_token"]', "");
+          setBot('[name="encrypt_key"]', "");
           // Set bot_kind radio (default webhook for legacy rows). Find
           // the matching radio button in the edit drawer and tick it.
           var kind = node.getAttribute("data-bot-kind") || "webhook";
