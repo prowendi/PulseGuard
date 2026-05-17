@@ -56,6 +56,30 @@
     }, 3000);
   };
 
+  // positionPopoverFixed promotes a row-level dropdown to position:fixed
+  // anchored just below the trigger button. The default markup uses
+  // absolute positioning so each card can keep rounded corners via
+  // overflow-hidden, but that clips the popover inside the table card.
+  // Switching to fixed positioning at open time keeps the rounded card
+  // (no need to relax overflow), avoids reflowing siblings, and lets the
+  // menu drop on top of the next row / sticky table header.
+  function positionPopoverFixed(btn, pop) {
+    var rect = btn.getBoundingClientRect();
+    pop.style.position = "fixed";
+    pop.style.top = (rect.bottom + 4) + "px";
+    pop.style.right = (window.innerWidth - rect.right) + "px";
+    pop.style.left = "";
+    pop.style.zIndex = "60";
+  }
+
+  function clearPopoverFixed(pop) {
+    pop.style.position = "";
+    pop.style.top = "";
+    pop.style.right = "";
+    pop.style.left = "";
+    pop.style.zIndex = "";
+  }
+
   // Toggle helper for any [data-psg-toggle="<targetId>"] button. Used by
   // the topbar user menu and the row-level "..." dropdowns on list pages.
   function bindToggles() {
@@ -66,8 +90,19 @@
         e.preventDefault(); e.stopPropagation();
         var target = document.getElementById(btn.getAttribute("data-psg-toggle"));
         if (!target) return;
+        // If we are about to OPEN a popover-style dropdown, switch it to
+        // position:fixed so the parent card's overflow-hidden does not
+        // clip it. Re-anchor on every open because the row may have
+        // scrolled since the last time.
+        var willOpen = target.classList.contains("hidden");
+        if (willOpen && target.hasAttribute("data-psg-popover")) {
+          positionPopoverFixed(btn, target);
+        }
         var open = target.classList.toggle("hidden");
         btn.setAttribute("aria-expanded", String(!open));
+        if (open && target.hasAttribute("data-psg-popover")) {
+          clearPopoverFixed(target);
+        }
       });
     });
     // Click-outside closes all dropdowns marked with data-psg-popover.
@@ -76,8 +111,20 @@
         if (pop.classList.contains("hidden")) return;
         if (pop.contains(e.target)) return;
         pop.classList.add("hidden");
+        clearPopoverFixed(pop);
       });
     }, { capture: true });
+    // Scroll / resize invalidates the fixed coordinates we set on open;
+    // close every visible popover so the next click re-anchors fresh.
+    var dismissAll = function () {
+      document.querySelectorAll("[data-psg-popover]").forEach(function (pop) {
+        if (pop.classList.contains("hidden")) return;
+        pop.classList.add("hidden");
+        clearPopoverFixed(pop);
+      });
+    };
+    window.addEventListener("scroll", dismissAll, { passive: true, capture: true });
+    window.addEventListener("resize", dismissAll, { passive: true });
   }
 
   // ---- Global data-action delegation ----------------------------------
