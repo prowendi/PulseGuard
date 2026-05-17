@@ -35,6 +35,11 @@ type InviteRepo interface {
 // BotToken transparently. ListAll is intentionally tenant-blind — only
 // runtime wire-up (startup listener boot) and admin tooling should call
 // it. All other surfaces MUST scope to a specific tenantID.
+//
+// SetEnabled is a narrow update used by the web layer (operator toggles
+// via /enable|/disable) and by the runtime's 401 auto-disable callback.
+// It is intentionally separate from Update so callers can flip the flag
+// without re-encrypting the token or touching unrelated columns.
 type BotRepo interface {
 	Insert(ctx context.Context, b *Bot) error
 	Update(ctx context.Context, b *Bot) error
@@ -42,6 +47,10 @@ type BotRepo interface {
 	GetByID(ctx context.Context, tenantID, id int64) (*Bot, error)
 	ListByTenant(ctx context.Context, tenantID int64) ([]*Bot, error)
 	ListAll(ctx context.Context) ([]*Bot, error)
+	// SetEnabled flips the enabled column on the (tenantID, id) row.
+	// Returns ErrNotFound when no row matches (so the 401 auto-disable
+	// path stays a no-op for a bot that has just been deleted).
+	SetEnabled(ctx context.Context, tenantID, id int64, enabled bool) error
 }
 
 // TemplateRepo manages tenant message templates.

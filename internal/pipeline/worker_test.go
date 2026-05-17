@@ -179,6 +179,14 @@ func (r *fakeBotRepo) ListAll(ctx context.Context) ([]*domain.Bot, error) {
 	}
 	return out, nil
 }
+func (r *fakeBotRepo) SetEnabled(ctx context.Context, tenantID, id int64, enabled bool) error {
+	b, ok := r.m[id]
+	if !ok || b.TenantID != tenantID {
+		return domain.ErrNotFound
+	}
+	b.Enabled = enabled
+	return nil
+}
 
 type fakeTplRepo struct{ m map[int64]*domain.Template }
 

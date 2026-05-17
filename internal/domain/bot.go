@@ -20,6 +20,15 @@ func IsValidPlatform(p string) bool {
 // Platform names the chat platform this bot speaks (currently only
 // "telegram"). BotToken is decrypted on read from the repo and must
 // never be logged or serialised verbatim.
+//
+// Enabled mirrors the bots.enabled column (migration 0005). When false,
+// the platform Manager refuses to spawn (or restart) the long-poll loop
+// for this bot, and the runtime startup wire-up skips it. Outbound
+// delivery via the worker pool currently does not branch on Enabled —
+// pause is enforced at the listener layer; toggling delivery off is a
+// channel-level concern. Operators flip this via the /api/v1/bots/{id}
+// /enable|/disable endpoints, and the runtime auto-flips it to false
+// when Telegram surfaces ErrTokenInvalid (401).
 type Bot struct {
 	ID          int64
 	TenantID    int64
@@ -27,6 +36,7 @@ type Bot struct {
 	Platform    string // currently always "telegram"
 	BotToken    string // plaintext (set after store-layer decryption)
 	Description string
+	Enabled     bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

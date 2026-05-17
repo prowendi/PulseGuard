@@ -237,6 +237,106 @@ func TestBotRepo_PlatformRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestBotRepo_EnabledDefaultsTrueOnInsert(t *testing.T) {
+	f := newResourceFixture(t)
+	// Caller leaves Enabled zero-valued (false). Insert must back-fill to
+	// true so the freshly-created struct matches the column DEFAULT, and
+	// a follow-up GetByID round-trips the same value.
+	b := f.makeBot(t, "default-enabled", "12345:tok")
+	if !b.Enabled {
+		t.Fatalf("Insert did not back-fill Enabled=true (got %v)", b.Enabled)
+	}
+	got, err := f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.Enabled {
+		t.Fatalf("roundtrip Enabled = false want true")
+	}
+}
+
+func TestBotRepo_SetEnabledToggle(t *testing.T) {
+	f := newResourceFixture(t)
+	b := f.makeBot(t, "toggle-me", "1:t")
+
+	// Disable.
+	if err := f.bots.SetEnabled(context.Background(), f.tenant.ID, b.ID, false); err != nil {
+		t.Fatalf("SetEnabled(false): %v", err)
+	}
+	got, err := f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Enabled {
+		t.Fatalf("after disable Enabled = true want false")
+	}
+
+	// Re-enable.
+	if err := f.bots.SetEnabled(context.Background(), f.tenant.ID, b.ID, true); err != nil {
+		t.Fatalf("SetEnabled(true): %v", err)
+	}
+	got, err = f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.Enabled {
+		t.Fatalf("after re-enable Enabled = false want true")
+	}
+}
+
+func TestBotRepo_SetEnabled_WrongTenant(t *testing.T) {
+	f := newResourceFixture(t)
+	b := f.makeBot(t, "x", "1:t")
+	err := f.bots.SetEnabled(context.Background(), 9999, b.ID, false)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetEnabled wrong tenant err = %v want ErrNotFound", err)
+	}
+	// Original row stays enabled.
+	got, err := f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.Enabled {
+		t.Fatalf("cross-tenant SetEnabled mutated row (Enabled=false)")
+	}
+}
+
+func TestBotRepo_SetEnabled_UnknownIDIsNotFound(t *testing.T) {
+	f := newResourceFixture(t)
+	err := f.bots.SetEnabled(context.Background(), f.tenant.ID, 9999, false)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetEnabled unknown id err = %v want ErrNotFound", err)
+	}
+}
+
+func TestBotRepo_UpdatePreservesEnabled(t *testing.T) {
+	f := newResourceFixture(t)
+	b := f.makeBot(t, "preserve-en", "1:t")
+	if err := f.bots.SetEnabled(context.Background(), f.tenant.ID, b.ID, false); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	got, err := f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	// Mutate an unrelated field and Update — Enabled value carried on
+	// the struct (false) must persist.
+	got.Description = "edited"
+	if err := f.bots.Update(context.Background(), got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	again, err := f.bots.GetByID(context.Background(), f.tenant.ID, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if again.Enabled {
+		t.Fatalf("Update flipped Enabled back to true (lost disable state)")
+	}
+	if again.Description != "edited" {
+		t.Fatalf("Update did not persist Description (got %q)", again.Description)
+	}
+}
+
 func TestBotRepo_Migrate0002BackfillsExistingRows(t *testing.T) {
 	// Simulate a database that only has migration 0001 applied (an
 	// "older" install), insert a bot via raw SQL with no platform column
