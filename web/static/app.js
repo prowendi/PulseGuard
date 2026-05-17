@@ -179,6 +179,32 @@
           }
           break;
         }
+        case "edit-bot": {
+          // Shared edit-drawer for the bots page. Row carries data-id /
+          // -name / -description / -platform. bot_token is intentionally
+          // NOT round-tripped — the field is left blank and the server
+          // reads "blank = keep current token". Only when the operator
+          // types a new value does the listener restart.
+          e.preventDefault();
+          var dbot = document.getElementById("drawer-edit-bot");
+          if (!dbot) return;
+          var fbot = dbot.querySelector("form");
+          if (fbot) {
+            fbot.action = "/ui/bots/" + node.getAttribute("data-id") + "/update";
+          }
+          var setBot = function (sel, v) {
+            var el = dbot.querySelector(sel);
+            if (el) el.value = v || "";
+          };
+          setBot('[name="name"]', node.getAttribute("data-name"));
+          setBot('[name="description"]', node.getAttribute("data-description"));
+          setBot('[name="platform"]', node.getAttribute("data-platform"));
+          setBot('[name="bot_token"]', ""); // explicit blank = keep token
+          if (typeof window.psgOpenDrawer === "function") {
+            window.psgOpenDrawer("drawer-edit-bot");
+          }
+          break;
+        }
         default:
           break;
       }

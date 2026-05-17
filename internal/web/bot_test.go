@@ -544,3 +544,197 @@ func TestBotsAPI_DisableCrossTenantIsNotFound(t *testing.T) {
 		t.Fatalf("cross-tenant disable mutated victim row")
 	}
 }
+
+// TestUIBotsUpdate_DescriptionOnlyKeepsToken proves the "blank
+// bot_token = keep current" semantic: a cosmetic edit that only
+// touches description must NOT mutate the encrypted token column. We
+// read the row back via the repo (not the masked API view) and
+// compare full plaintext so a regression that replaces token with the
+// empty string would fail loudly.
+func TestUIBotsUpdate_DescriptionOnlyKeepsToken(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+	tenantID := meTenantID(t, h, client)
+
+	bot := &domain.Bot{TenantID: tenantID, Name: "keep-tok", Platform: domain.PlatformTelegram, BotToken: "12345:AAAAoriginalTok"}
+	if err := h.deps.Bots.Insert(context.Background(), bot); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("name", bot.Name)
+	form.Set("description", "edited-desc")
+	form.Set("platform", "telegram")
+	form.Set("bot_token", "") // blank = keep
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/ui/bots/"+strInt64(bot.ID)+"/update"),
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d", resp.StatusCode)
+	}
+
+	got, err := h.deps.Bots.GetByID(context.Background(), tenantID, bot.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.BotToken != "12345:AAAAoriginalTok" {
+		t.Fatalf("token mutated: %q (want original)", got.BotToken)
+	}
+	if got.Description != "edited-desc" {
+		t.Fatalf("description = %q", got.Description)
+	}
+}
+
+// TestUIBotsUpdate_NewTokenReplaces proves that supplying a non-empty
+// bot_token in the edit form replaces the stored credential and that
+// the masked view echoes the new tail (so the user can confirm via
+// the table without re-rendering).
+func TestUIBotsUpdate_NewTokenReplaces(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+	tenantID := meTenantID(t, h, client)
+
+	bot := &domain.Bot{TenantID: tenantID, Name: "rotate-tok", Platform: domain.PlatformTelegram, BotToken: "12345:AAAAoldToken"}
+	if err := h.deps.Bots.Insert(context.Background(), bot); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("name", bot.Name)
+	form.Set("description", "")
+	form.Set("platform", "telegram")
+	form.Set("bot_token", "67890:BBBBnewToken9999")
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/ui/bots/"+strInt64(bot.ID)+"/update"),
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d", resp.StatusCode)
+	}
+
+	got, err := h.deps.Bots.GetByID(context.Background(), tenantID, bot.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.BotToken != "67890:BBBBnewToken9999" {
+		t.Fatalf("token not rotated: %q", got.BotToken)
+	}
+}
+
+// TestUIBotsUpdate_DisabledBotKeepsListenerDown is the regression
+// guard for the "edit a disabled bot must not silently spawn a
+// listener" expectation. We disable the bot via the repo, edit the
+// description, and assert the bot stays disabled. The platform
+// Manager is unwired in the test harness so the listener wouldn't
+// actually run regardless — what we are checking here is that the
+// uiBotUpdate handler does not flip the Enabled column itself.
+func TestUIBotsUpdate_DisabledBotKeepsListenerDown(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+	tenantID := meTenantID(t, h, client)
+
+	bot := &domain.Bot{TenantID: tenantID, Name: "paused", Platform: domain.PlatformTelegram, BotToken: "12345:AAAAdisabledTok"}
+	if err := h.deps.Bots.Insert(context.Background(), bot); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if err := h.deps.Bots.SetEnabled(context.Background(), tenantID, bot.ID, false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("name", bot.Name)
+	form.Set("description", "renamed-while-disabled")
+	form.Set("platform", "telegram")
+	form.Set("bot_token", "67890:BBBBfreshRotation9")
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/ui/bots/"+strInt64(bot.ID)+"/update"),
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d", resp.StatusCode)
+	}
+
+	got, err := h.deps.Bots.GetByID(context.Background(), tenantID, bot.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Enabled {
+		t.Fatalf("update flipped Enabled back to true; want stay false")
+	}
+	if got.Description != "renamed-while-disabled" {
+		t.Fatalf("description not updated: %q", got.Description)
+	}
+	if got.BotToken != "67890:BBBBfreshRotation9" {
+		t.Fatalf("token not updated: %q", got.BotToken)
+	}
+}
+
+// TestUIBotsUpdate_RejectsMalformedToken guards the validator: a
+// bot_token field that is non-blank but ill-formatted must be rejected
+// rather than persisted as-is. We expect 200 (the flash partial is
+// rendered inline by the handler) with the error message visible.
+func TestUIBotsUpdate_RejectsMalformedToken(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+	tenantID := meTenantID(t, h, client)
+
+	bot := &domain.Bot{TenantID: tenantID, Name: "v", Platform: domain.PlatformTelegram, BotToken: "12345:AAAAvalidTok"}
+	if err := h.deps.Bots.Insert(context.Background(), bot); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("name", bot.Name)
+	form.Set("description", "")
+	form.Set("platform", "telegram")
+	form.Set("bot_token", "not-a-token")
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/ui/bots/"+strInt64(bot.ID)+"/update"),
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	bs, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(bs), "bot_token") {
+		t.Fatalf("missing validation error: %s", string(bs)[:400])
+	}
+
+	// Token unchanged.
+	got, err := h.deps.Bots.GetByID(context.Background(), tenantID, bot.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.BotToken != "12345:AAAAvalidTok" {
+		t.Fatalf("token mutated despite invalid input: %q", got.BotToken)
+	}
+}

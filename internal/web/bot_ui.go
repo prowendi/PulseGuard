@@ -19,6 +19,7 @@ type botListPage struct {
 func installBotsUIRoutes(r chi.Router, deps Deps) {
 	r.Get("/bots", uiBotList(deps))
 	r.Post("/bots", uiBotCreate(deps))
+	r.Post("/bots/{id}/update", uiBotUpdate(deps))
 	r.Post("/bots/{id}/delete", uiBotDelete(deps))
 }
 
@@ -81,6 +82,76 @@ func uiBotCreate(deps Deps) http.HandlerFunc {
 		uiBotListWithFlash(w, r, deps, tenant, "ok",
 			"Bot 已创建。请到 Telegram 给该 bot 发送 /start，或将 bot 拉入群组，"+
 				"bot 会自动回复对话的 Chat ID。把 Chat ID 填入新建 Channel 的表单。")
+	}
+}
+
+// uiBotUpdate handles in-place edits from the shared edit-drawer. The
+// drawer carries name / description / platform always, and bot_token
+// only when the operator intentionally rotates the credential (blank
+// input = keep current token). This lets routine renames stay cheap:
+// only token + platform changes trigger a listener restart so the
+// running long-poll loop is not bounced for cosmetic edits.
+func uiBotUpdate(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
+			http.Error(w, "csrf", http.StatusForbidden)
+			return
+		}
+		id, ok := parsePathID(w, r, "id")
+		if !ok {
+			return
+		}
+		_ = r.ParseForm()
+		name := strings.TrimSpace(r.PostForm.Get("name"))
+		desc := r.PostForm.Get("description")
+		platform := strings.TrimSpace(r.PostForm.Get("platform"))
+		if platform == "" {
+			platform = domain.PlatformTelegram
+		}
+		newToken := strings.TrimSpace(r.PostForm.Get("bot_token"))
+		tenant := wmw.Tenant(r.Context())
+		if name == "" {
+			uiBotListWithFlash(w, r, deps, tenant, "error", "name 不能为空")
+			return
+		}
+		if !domain.IsValidPlatform(platform) {
+			uiBotListWithFlash(w, r, deps, tenant, "error", "未知 platform")
+			return
+		}
+		// Validate the token format only when the operator actually
+		// typed something. Blank means "keep existing".
+		if newToken != "" && !botTokenPattern.MatchString(newToken) {
+			uiBotListWithFlash(w, r, deps, tenant, "error", "bot_token 格式不正确")
+			return
+		}
+		bot, err := deps.Bots.GetByID(r.Context(), tenant.ID, id)
+		if err != nil {
+			uiBotListWithFlash(w, r, deps, tenant, "error", "bot 不存在或不属于当前租户")
+			return
+		}
+		tokenChanged := false
+		platformChanged := bot.Platform != platform
+		if newToken != "" && newToken != bot.BotToken {
+			bot.BotToken = newToken
+			tokenChanged = true
+		}
+		bot.Name = name
+		bot.Description = desc
+		bot.Platform = platform
+		if err := deps.Bots.Update(r.Context(), bot); err != nil {
+			uiBotListWithFlash(w, r, deps, tenant, "error", err.Error())
+			return
+		}
+		// Only bounce the long-poll loop when the credentials it speaks
+		// or the platform binding changed. Cosmetic edits (name /
+		// description) leave the listener untouched. A disabled bot has
+		// no listener to restart — restartBotListener degrades to a
+		// Stop + Start where Start is a no-op for !Enabled bots inside
+		// the platform manager (the runtime gates that itself).
+		if tokenChanged || platformChanged {
+			restartBotListener(deps, bot)
+		}
+		uiBotListWithFlash(w, r, deps, tenant, "ok", "Bot 已更新。")
 	}
 }
 
