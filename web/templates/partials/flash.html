@@ -1,1 +1,8 @@
-{{ define "flash" }}<div class="mb-4 rounded-md border p-3 text-sm {{ if eq .Level "success" }}bg-green-50 border-green-200 text-green-900{{ else if eq .Level "error" }}bg-red-50 border-red-200 text-red-900{{ else }}bg-blue-50 border-blue-200 text-blue-900{{ end }}">{{ .Message }}</div>{{ end }}
+{{ define "flash" }}<div class="mb-5 rounded-xl border p-4 flex items-start gap-3 text-sm shadow-sm {{ if eq .Level "success" }}bg-emerald-50 border-emerald-200 text-emerald-900{{ else if eq .Level "error" }}bg-rose-50 border-rose-200 text-rose-900{{ else }}bg-slate-50 border-slate-200 text-slate-700{{ end }}">
+  <svg viewBox="0 0 24 24" class="h-5 w-5 shrink-0 mt-0.5 {{ if eq .Level "success" }}text-emerald-500{{ else if eq .Level "error" }}text-rose-500{{ else }}text-slate-400{{ end }}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    {{ if eq .Level "success" }}<path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/>
+    {{ else if eq .Level "error" }}<path d="M12 8v4m0 4h.01"/><circle cx="12" cy="12" r="10"/>
+    {{ else }}<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>{{ end }}
+  </svg>
+  <div class="flex-1 leading-relaxed">{{ .Message }}</div>
+</div>{{ end }}
