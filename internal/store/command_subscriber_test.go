@@ -16,9 +16,12 @@ func newCommandFixture(t *testing.T) (*resourceFixture, *CommandRepo) {
 	return f, NewCommandRepo(f.db, f.clk)
 }
 
-func makeCommand(tenantID int64, name string) *domain.Command {
+// makeCommand builds a command bound to the supplied bot. Per-bot
+// scoping (2026-05): a non-zero BotID is now mandatory for Insert.
+func makeCommand(tenantID, botID int64, name string) *domain.Command {
 	return &domain.Command{
 		TenantID:    tenantID,
+		BotID:       botID,
 		Name:        name,
 		Description: "demo",
 		Code:        `def handle(args): return "ok"`,
@@ -28,7 +31,8 @@ func makeCommand(tenantID int64, name string) *domain.Command {
 
 func TestCommandRepo_InsertAssignsID(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c := makeCommand(f.tenant.ID, "/查询")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/查询")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -40,22 +44,58 @@ func TestCommandRepo_InsertAssignsID(t *testing.T) {
 	}
 }
 
-func TestCommandRepo_InsertUniqueWithinTenant(t *testing.T) {
+func TestCommandRepo_InsertUniqueWithinBot(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c1 := makeCommand(f.tenant.ID, "/查询")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c1 := makeCommand(f.tenant.ID, bot.ID, "/查询")
 	if err := repo.Insert(context.Background(), c1); err != nil {
 		t.Fatalf("Insert 1: %v", err)
 	}
-	c2 := makeCommand(f.tenant.ID, "/查询")
+	c2 := makeCommand(f.tenant.ID, bot.ID, "/查询")
 	err := repo.Insert(context.Background(), c2)
 	if err == nil {
-		t.Fatalf("expected unique constraint error on duplicate (tenant, name)")
+		t.Fatalf("expected unique constraint error on duplicate (bot, name)")
+	}
+}
+
+// TestCommandRepo_SameNameDifferentBotsAllowed pins the new per-bot
+// scoping: /查询 on bot A and /查询 on bot B coexist without colliding.
+func TestCommandRepo_SameNameDifferentBotsAllowed(t *testing.T) {
+	f, repo := newCommandFixture(t)
+	botA := f.makeBot(t, "alpha", "1:secret")
+	botB := f.makeBot(t, "beta", "2:secret")
+	if err := repo.Insert(context.Background(), makeCommand(f.tenant.ID, botA.ID, "/查询")); err != nil {
+		t.Fatalf("Insert on bot A: %v", err)
+	}
+	if err := repo.Insert(context.Background(), makeCommand(f.tenant.ID, botB.ID, "/查询")); err != nil {
+		t.Fatalf("Insert on bot B (same name): %v", err)
+	}
+}
+
+// TestCommandRepo_RejectsCrossTenantBot guards the ensureBotOwnership
+// check: attaching a command to a bot owned by a different tenant
+// must fail loudly even if the FK alone would allow it.
+func TestCommandRepo_RejectsCrossTenantBot(t *testing.T) {
+	f, repo := newCommandFixture(t)
+	tn2 := makeTenant("other@x.com")
+	if err := f.tenants.Insert(context.Background(), tn2); err != nil {
+		t.Fatalf("seed tenant 2: %v", err)
+	}
+	otherBot := &domain.Bot{TenantID: tn2.ID, Name: "other", BotToken: "9:secret"}
+	if err := f.bots.Insert(context.Background(), otherBot); err != nil {
+		t.Fatalf("seed bot for tenant 2: %v", err)
+	}
+	c := makeCommand(f.tenant.ID, otherBot.ID, "/x")
+	err := repo.Insert(context.Background(), c)
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("cross-tenant bot id should reject as ErrValidation, got %v", err)
 	}
 }
 
 func TestCommandRepo_GetByID(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c := makeCommand(f.tenant.ID, "/echo")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -66,11 +106,15 @@ func TestCommandRepo_GetByID(t *testing.T) {
 	if got.Name != "/echo" || got.Code != c.Code {
 		t.Fatalf("mismatch: %+v", got)
 	}
+	if got.BotID != bot.ID {
+		t.Fatalf("BotID not hydrated: got %d want %d", got.BotID, bot.ID)
+	}
 }
 
 func TestCommandRepo_GetByID_TenantIsolation(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c := makeCommand(f.tenant.ID, "/echo")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +130,8 @@ func TestCommandRepo_GetByID_TenantIsolation(t *testing.T) {
 
 func TestCommandRepo_GetByTenantAndName(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c := makeCommand(f.tenant.ID, "/查询")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/查询")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +151,7 @@ func TestCommandRepo_GetByTenantAndName(t *testing.T) {
 func TestCommandRepo_GetByBotAndName(t *testing.T) {
 	f, repo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/查询")
+	c := makeCommand(f.tenant.ID, bot.ID, "/查询")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +167,7 @@ func TestCommandRepo_GetByBotAndName(t *testing.T) {
 func TestCommandRepo_GetByBotAndName_DisabledHidden(t *testing.T) {
 	f, repo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/查询")
+	c := makeCommand(f.tenant.ID, bot.ID, "/查询")
 	c.Enabled = false
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -133,10 +178,28 @@ func TestCommandRepo_GetByBotAndName_DisabledHidden(t *testing.T) {
 	}
 }
 
+// TestCommandRepo_GetByBotAndName_OnlyOwnBot guards the per-bot
+// scoping: a command bound to bot A must NOT be visible when the
+// dispatcher resolves through bot B, even within the same tenant.
+func TestCommandRepo_GetByBotAndName_OnlyOwnBot(t *testing.T) {
+	f, repo := newCommandFixture(t)
+	botA := f.makeBot(t, "alpha", "1:secret")
+	botB := f.makeBot(t, "beta", "2:secret")
+	c := makeCommand(f.tenant.ID, botA.ID, "/查询")
+	if err := repo.Insert(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	// Resolving via the sibling bot must miss.
+	_, err := repo.GetByBotAndName(context.Background(), botB.ID, "/查询")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cross-bot lookup should miss, got err=%v", err)
+	}
+}
+
 func TestCommandRepo_GetByBotAndName_CrossTenant(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	// command belongs to tenant 1
-	c := makeCommand(f.tenant.ID, "/查询")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/查询")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +220,8 @@ func TestCommandRepo_GetByBotAndName_CrossTenant(t *testing.T) {
 
 func TestCommandRepo_Update(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c := makeCommand(f.tenant.ID, "/v1")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/v1")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +239,8 @@ func TestCommandRepo_Update(t *testing.T) {
 
 func TestCommandRepo_Delete(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c := makeCommand(f.tenant.ID, "/k")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/k")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +254,8 @@ func TestCommandRepo_Delete(t *testing.T) {
 
 func TestCommandRepo_Delete_CrossTenant(t *testing.T) {
 	f, repo := newCommandFixture(t)
-	c := makeCommand(f.tenant.ID, "/k")
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, bot.ID, "/k")
 	if err := repo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +267,9 @@ func TestCommandRepo_Delete_CrossTenant(t *testing.T) {
 
 func TestCommandRepo_ListByTenant(t *testing.T) {
 	f, repo := newCommandFixture(t)
+	bot := f.makeBot(t, "alpha", "1:secret")
 	for _, n := range []string{"/a", "/b", "/c"} {
-		if err := repo.Insert(context.Background(), makeCommand(f.tenant.ID, n)); err != nil {
+		if err := repo.Insert(context.Background(), makeCommand(f.tenant.ID, bot.ID, n)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -217,10 +284,12 @@ func TestCommandRepo_ListByTenant(t *testing.T) {
 
 func TestCommandRepo_Insert_ValidationErrors(t *testing.T) {
 	f, repo := newCommandFixture(t)
+	bot := f.makeBot(t, "alpha", "1:secret")
 	cases := map[string]*domain.Command{
-		"zero tenant": {TenantID: 0, Name: "/x", Code: "x"},
-		"empty name":  {TenantID: f.tenant.ID, Name: "", Code: "x"},
-		"empty code":  {TenantID: f.tenant.ID, Name: "/x", Code: ""},
+		"zero tenant": {TenantID: 0, BotID: bot.ID, Name: "/x", Code: "x"},
+		"zero bot":    {TenantID: f.tenant.ID, BotID: 0, Name: "/x", Code: "x"},
+		"empty name":  {TenantID: f.tenant.ID, BotID: bot.ID, Name: "", Code: "x"},
+		"empty code":  {TenantID: f.tenant.ID, BotID: bot.ID, Name: "/x", Code: ""},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -236,7 +305,7 @@ func TestCommandRepo_Insert_ValidationErrors(t *testing.T) {
 func TestSubscriberRepo_UpsertNewRow(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +328,7 @@ func TestSubscriberRepo_UpsertNewRow(t *testing.T) {
 func TestSubscriberRepo_UpsertIdempotent(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +372,7 @@ func TestSubscriberRepo_UpsertIdempotent(t *testing.T) {
 func TestSubscriberRepo_DefaultPlatform(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +393,7 @@ func TestSubscriberRepo_DefaultPlatform(t *testing.T) {
 func TestSubscriberRepo_ListByTenant(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +417,7 @@ func TestSubscriberRepo_ListByTenant(t *testing.T) {
 func TestSubscriberRepo_Delete_TenantGuard(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +441,7 @@ func TestSubscriberRepo_Delete_TenantGuard(t *testing.T) {
 func TestSubscriberRepo_CommandDeleteCascades(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +470,7 @@ func TestSubscriberRepo_CommandDeleteCascades(t *testing.T) {
 func TestSubscriberRepo_DeleteByChatAndCommandSlashName(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +494,7 @@ func TestSubscriberRepo_DeleteByChatAndCommandSlashName(t *testing.T) {
 func TestSubscriberRepo_DeleteByChatAndCommandBareName(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "查询") // stored without leading slash
+	c := makeCommand(f.tenant.ID, bot.ID, "查询") // stored without leading slash
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +524,7 @@ func TestSubscriberRepo_DeleteByChatAndCommandNotFound(t *testing.T) {
 func TestSubscriberRepo_DeleteByChatAndCommandCrossBotIgnored(t *testing.T) {
 	f, cmdRepo := newCommandFixture(t)
 	bot := f.makeBot(t, "alpha", "1:secret")
-	c := makeCommand(f.tenant.ID, "/echo")
+	c := makeCommand(f.tenant.ID, bot.ID, "/echo")
 	if err := cmdRepo.Insert(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}

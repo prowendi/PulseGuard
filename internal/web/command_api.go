@@ -17,6 +17,7 @@ import (
 // own rows by virtue of the repo's tenant scoping.
 type commandView struct {
 	ID          int64  `json:"id"`
+	BotID       int64  `json:"bot_id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Code        string `json:"code"`
@@ -28,6 +29,7 @@ type commandView struct {
 func toCommandView(c *domain.Command) commandView {
 	return commandView{
 		ID:          c.ID,
+		BotID:       c.BotID,
 		Name:        c.Name,
 		Description: c.Description,
 		Code:        c.Code,
@@ -38,12 +40,17 @@ func toCommandView(c *domain.Command) commandView {
 }
 
 type commandCreatePayload struct {
+	BotID       int64  `json:"bot_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Code        string `json:"code"`
 	Enabled     *bool  `json:"enabled,omitempty"`
 }
 
+// commandUpdatePayload deliberately omits bot_id: a command's bot is
+// fixed at creation. Re-binding to a different bot would orphan its
+// existing subscribers, so the operator workflow is "delete + recreate
+// on the new bot" instead.
 type commandUpdatePayload struct {
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
@@ -96,6 +103,10 @@ func apiCommandCreate(deps Deps) http.HandlerFunc {
 		if !validateName(w, r, p.Name, 64) {
 			return
 		}
+		if p.BotID <= 0 {
+			writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_id is required")
+			return
+		}
 		if strings.TrimSpace(p.Code) == "" {
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "code is required")
 			return
@@ -108,8 +119,16 @@ func apiCommandCreate(deps Deps) http.HandlerFunc {
 			enabled = *p.Enabled
 		}
 		tenant := wmw.Tenant(r.Context())
+		// Bot ownership is re-checked in the repo, but failing fast here
+		// turns the cross-tenant attempt into a clean 404 rather than a
+		// 400 with a less useful "validation" error.
+		if _, err := deps.Bots.GetByID(r.Context(), tenant.ID, p.BotID); err != nil {
+			writeRepoError(w, r, deps, err)
+			return
+		}
 		c := &domain.Command{
 			TenantID:    tenant.ID,
+			BotID:       p.BotID,
 			Name:        p.Name,
 			Description: p.Description,
 			Code:        p.Code,

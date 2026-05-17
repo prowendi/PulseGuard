@@ -362,6 +362,14 @@
           setCmdVal('[name="name"]', node.getAttribute("data-name"));
           setCmdVal('[name="description"]', node.getAttribute("data-description"));
           setCmdVal('[name="code"]', node.getAttribute("data-code"));
+          // Bot binding is immutable; show it read-only so the operator
+          // sees which bot this command will run on but cannot
+          // accidentally retarget. (Renaming/recreating the command on
+          // a different bot is the documented workflow.)
+          var botDisp = dec.querySelector("[data-edit-command-bot-display]");
+          if (botDisp) {
+            botDisp.value = node.getAttribute("data-bot-name") || "";
+          }
           var ecb = dec.querySelector('[name="enabled"]');
           if (ecb) {
             ecb.checked = node.getAttribute("data-enabled") === "1";

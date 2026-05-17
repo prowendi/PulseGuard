@@ -158,10 +158,10 @@ type SenderWithOpts interface {
 	EditMessage(ctx context.Context, botToken, chatID string, messageID int64, parseMode, text string) error
 }
 
-// CommandRepo manages tenant-owned Starlark commands. GetByBotAndName
-// is the listener's hot-path resolver: it joins commands to bots via
-// the bots.tenant_id column so a listener can dispatch with just the
-// (bot_id, name) pair available in an inbound Telegram update.
+// CommandRepo manages Starlark commands bound to a specific bot.
+// GetByBotAndName is the listener's hot-path resolver: with per-bot
+// scoping (2026-05) it's now a direct WHERE bot_id = ? lookup rather
+// than the old commands→bots tenant JOIN.
 type CommandRepo interface {
 	Insert(ctx context.Context, c *Command) error
 	Update(ctx context.Context, c *Command) error
@@ -169,14 +169,14 @@ type CommandRepo interface {
 	GetByID(ctx context.Context, tenantID, id int64) (*Command, error)
 	GetByTenantAndName(ctx context.Context, tenantID int64, name string) (*Command, error)
 	ListByTenant(ctx context.Context, tenantID int64) ([]*Command, error)
-	// GetByBotAndName resolves the tenant-scoped command for the bot
-	// owner. ErrNotFound is returned for unknown bot, unknown command,
-	// or cross-tenant mismatches. Listener-only API.
+	// GetByBotAndName resolves the bot-scoped command by (bot_id, name).
+	// ErrNotFound is returned for unknown bot, unknown command, and
+	// disabled rows. Listener-only API.
 	GetByBotAndName(ctx context.Context, botID int64, name string) (*Command, error)
-	// ListByBot enumerates every ENABLED command owned by the same
-	// tenant as botID. Powers the Telegram setMyCommands publisher and
-	// the /commands built-in; both expose a public catalog, so disabled
-	// rows MUST stay hidden. Same bot id convention as GetByBotAndName.
+	// ListByBot enumerates every ENABLED command bound to botID. Powers
+	// the Telegram setMyCommands publisher and the /commands built-in;
+	// both expose a public catalog, so disabled rows MUST stay hidden.
+	// Same bot id convention as GetByBotAndName.
 	ListByBot(ctx context.Context, botID int64) ([]*Command, error)
 }
 

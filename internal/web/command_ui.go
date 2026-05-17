@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/wendi/pulseguard/internal/domain"
@@ -13,8 +14,27 @@ import (
 // commandsPage data wrapper for /ui/commands.
 type commandsPage struct {
 	pageData
-	Commands []commandView
+	Commands []commandRow
+	Bots     []commandBotOption
 	Demos    []commandDemo
+}
+
+// commandRow is the listing-table projection. It carries the owning
+// bot's display name so the UI can show "/echo · alpha-bot" without an
+// extra round-trip per row.
+type commandRow struct {
+	commandView
+	BotName     string
+	BotPlatform string
+}
+
+// commandBotOption powers the drawer's bot <select>. The platform
+// label lets the operator distinguish "alpha (telegram)" from
+// "beta (lark)" when names clash.
+type commandBotOption struct {
+	ID       int64
+	Name     string
+	Platform string
 }
 
 // commandDemo is a small showcase the page renders so operators can
@@ -83,7 +103,12 @@ func uiCommandCreate(deps Deps) http.HandlerFunc {
 		desc := r.PostForm.Get("description")
 		code := r.PostForm.Get("code")
 		enabled := r.PostForm.Get("enabled") != ""
+		botID, _ := strconv.ParseInt(strings.TrimSpace(r.PostForm.Get("bot_id")), 10, 64)
 		tenant := wmw.Tenant(r.Context())
+		if botID <= 0 {
+			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: "请选择命令绑定的 Bot"})
+			return
+		}
 		if name == "" || strings.TrimSpace(code) == "" {
 			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: "name 与 code 不能为空"})
 			return
@@ -95,8 +120,16 @@ func uiCommandCreate(deps Deps) http.HandlerFunc {
 			})
 			return
 		}
+		// Verify the bot belongs to this tenant before we hand the id
+		// to the repo — gives a clear flash message instead of a
+		// generic 500 if a stale form is submitted.
+		if _, err := deps.Bots.GetByID(r.Context(), tenant.ID, botID); err != nil {
+			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: "Bot 不存在或不属于当前租户"})
+			return
+		}
 		c := &domain.Command{
 			TenantID:    tenant.ID,
+			BotID:       botID,
 			Name:        name,
 			Description: desc,
 			Code:        code,
@@ -196,9 +229,33 @@ func uiCommandToggle(deps Deps) http.HandlerFunc {
 
 func renderCommandsPage(w http.ResponseWriter, r *http.Request, deps Deps, tenant *domain.Tenant, fl *flash) {
 	items, _ := deps.Commands.ListByTenant(r.Context(), tenant.ID)
-	views := make([]commandView, 0, len(items))
+	bots, _ := deps.Bots.ListByTenant(r.Context(), tenant.ID)
+	botIndex := make(map[int64]*domain.Bot, len(bots))
+	for _, b := range bots {
+		botIndex[b.ID] = b
+	}
+	views := make([]commandRow, 0, len(items))
 	for _, c := range items {
-		views = append(views, toCommandView(c))
+		row := commandRow{commandView: toCommandView(c)}
+		if b := botIndex[c.BotID]; b != nil {
+			row.BotName = b.Name
+			row.BotPlatform = string(b.Platform)
+		} else {
+			// Defensive: a command without a matching bot row should
+			// be unreachable post-migration (FK guards it), but render
+			// "(已删除)" rather than a blank cell so the operator
+			// notices and can clean up.
+			row.BotName = "(已删除)"
+		}
+		views = append(views, row)
+	}
+	options := make([]commandBotOption, 0, len(bots))
+	for _, b := range bots {
+		options = append(options, commandBotOption{
+			ID:       b.ID,
+			Name:     b.Name,
+			Platform: string(b.Platform),
+		})
 	}
 	_ = Render(w, http.StatusOK, "commands-page", commandsPage{
 		pageData: pageData{
@@ -210,6 +267,7 @@ func renderCommandsPage(w http.ResponseWriter, r *http.Request, deps Deps, tenan
 			Theme:  themeFromRequest(r),
 		},
 		Commands: views,
+		Bots:     options,
 		Demos:    commandDemos(),
 	})
 }

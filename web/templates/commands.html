@@ -4,19 +4,26 @@
     <div>
       <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-600">运行</p>
       <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">命令</h1>
-      <p class="mt-1 text-sm text-slate-500">在 Telegram 私聊里给 bot 发送 <code class="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[12px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">/&lt;name&gt; [args...]</code> 即触发本 Starlark 脚本，结果回传给用户。</p>
+      <p class="mt-1 text-sm text-slate-500">每条命令绑定到一个 Bot；在该 Bot 的会话里发送 <code class="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[12px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">/&lt;name&gt; [args...]</code> 即触发 Starlark 脚本并将结果回传给用户。</p>
     </div>
+    {{ if .Bots }}
     <button type="button" data-action="drawer-open" data-target="drawer-new-cmd" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       新建命令
     </button>
+    {{ else }}
+    <a href="/ui/bots" class="inline-flex items-center gap-1.5 rounded-md bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 text-[13px] font-semibold transition-all dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100">
+      <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      先去创建 Bot
+    </a>
+    {{ end }}
   </header>
 
   <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
     <section class="xl:col-span-2 bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
       <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
         <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">已配置命令</h2>
-        <p class="mt-0.5 text-[12px] text-slate-500">共 {{ len .Commands }} 个</p>
+        <p class="mt-0.5 text-[12px] text-slate-500">共 {{ len .Commands }} 个 · 命令在 Bot 维度唯一（同名命令可绑定不同 Bot）</p>
       </header>
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
@@ -24,6 +31,7 @@
             <tr class="text-left">
               <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-12">#</th>
               <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">命令</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">绑定 Bot</th>
               <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">描述</th>
               <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">状态</th>
               <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">更新时间</th>
@@ -35,6 +43,12 @@
             <tr class="hover:bg-slate-50/70 transition-colors dark:hover:bg-slate-800/40">
               <td class="px-5 py-3 font-mono text-[12px] text-slate-400">#{{ .ID }}</td>
               <td class="px-5 py-3 font-mono text-slate-900 font-semibold dark:text-white">/{{ .Name }}</td>
+              <td class="px-5 py-3">
+                <div class="inline-flex items-center gap-1.5">
+                  <span class="text-slate-700 dark:text-slate-200 text-[13px] font-medium">{{ .BotName }}</span>
+                  {{ if .BotPlatform }}<span class="text-[10.5px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded {{ if eq .BotPlatform "lark" }}bg-sky-50 text-sky-700 ring-1 ring-sky-100{{ else }}bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100{{ end }}">{{ .BotPlatform }}</span>{{ end }}
+                </div>
+              </td>
               <td class="px-5 py-3 text-slate-500">{{ .Description }}</td>
               <td class="px-5 py-3">{{ if .Enabled }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>启用</span>{{ else }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 ring-1 ring-slate-200"><span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>禁用</span>{{ end }}</td>
               <td class="px-5 py-3 text-slate-500 font-mono text-[12px]">{{ .UpdatedAt }}</td>
@@ -47,6 +61,8 @@
                     <button type="button"
                             data-action="edit-command"
                             data-id="{{ .ID }}"
+                            data-bot-id="{{ .BotID }}"
+                            data-bot-name="{{ .BotName }}"
                             data-name="{{ .Name }}"
                             data-description="{{ .Description }}"
                             data-code="{{ .Code }}"
@@ -74,7 +90,7 @@
               </td>
             </tr>
             {{ end }}
-            {{ if not .Commands }}<tr><td colspan="6" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无命令" "从右侧 Demo Gallery 复制一段范例上手，或点击新建按钮在编辑器中手写。" "javascript:psgOpenDrawer('drawer-new-cmd')" "立即创建") }}</td></tr>{{ end }}
+            {{ if not .Commands }}<tr><td colspan="7" class="px-5 py-14">{{ if .Bots }}{{ template "empty-state" (mkEmpty "尚无命令" "从右侧 Demo Gallery 复制一段范例上手，或点击新建按钮在编辑器中手写。" "javascript:psgOpenDrawer('drawer-new-cmd')" "立即创建") }}{{ else }}{{ template "empty-state" (mkEmpty "尚未创建 Bot" "命令必须绑定到一个 Bot；先在 Bots 页面创建一个 Bot，然后回来即可新建命令。" "/ui/bots" "前往 Bots") }}{{ end }}</td></tr>{{ end }}
           </tbody>
         </table>
       </div>
@@ -117,6 +133,14 @@
     </header>
     <form method="POST" action="/ui/commands" class="flex-1 overflow-y-auto p-6 space-y-4">
       <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div>
+        <label for="cmd-bot-id" class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">绑定 Bot <span class="text-rose-500">*</span></label>
+        <select id="cmd-bot-id" name="bot_id" required class="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-[13.5px] text-slate-900 focus:border-emerald-500 focus:ring-emerald-500/20 dark:bg-slate-800 dark:border-slate-700 dark:text-white">
+          <option value="">— 请选择 Bot —</option>
+          {{ range .Bots }}<option value="{{ .ID }}">{{ .Name }} · {{ .Platform }}</option>{{ end }}
+        </select>
+        <p class="mt-1 text-[11.5px] text-slate-400">命令绑定 Bot 后不可更改；如需切换 Bot 请删除后重新创建。</p>
+      </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="psg-float-wrap">
           <input type="text" id="cmn" name="name" required maxlength="64" placeholder="echo" class="psg-float-input font-mono">
@@ -164,8 +188,13 @@
         <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
       </button>
     </header>
-    <form method="POST" action="/ui/commands" class="flex-1 overflow-y-auto p-6 space-y-4">
+    <form method="POST" action="/ui/commands" class="flex-1 overflow-y-auto p-6 space-y-4" data-edit-command-form>
       <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div>
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">绑定 Bot</label>
+        <input type="text" data-edit-command-bot-display readonly class="w-full rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-[13.5px] text-slate-600 cursor-not-allowed dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300">
+        <p class="mt-1 text-[11.5px] text-slate-400">命令绑定的 Bot 不可更改；如需切换请删除后重新创建。</p>
+      </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="psg-float-wrap">
           <input type="text" id="ecmn" name="name" required maxlength="64" placeholder="echo" class="psg-float-input font-mono">

@@ -2,10 +2,38 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// seedTelegramBot creates a single Telegram bot through the public
+// JSON API so subsequent /api/v1/commands inserts have a bot to
+// bind to. Returns the bot's id.
+func seedTelegramBot(t *testing.T, h *testHarness, client *http.Client, csrf string, name string) int64 {
+	t.Helper()
+	body := mustJSON(t, map[string]any{
+		"name":      name,
+		"platform":  "telegram",
+		"bot_token": "1:secret",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed bot status=%d body=%s", resp.StatusCode, drain(resp))
+	}
+	var v botView
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		t.Fatalf("decode bot: %v", err)
+	}
+	return v.ID
+}
 
 // TestCommandsAPI_CodeSizeLimit_RejectsOverCap proves that a Starlark
 // source larger than MaxCommandCodeBytes (64 KiB) is rejected with a
@@ -18,14 +46,16 @@ func TestCommandsAPI_CodeSizeLimit_RejectsOverCap(t *testing.T) {
 	h := newTestHarness(t)
 	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
 	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+	botID := seedTelegramBot(t, h, client, csrf, "cmd-bot")
 
 	// 70 KiB of source (> 64 KiB cap). The exact contents are
 	// irrelevant — we never reach the Starlark compiler.
 	over := "def handle(args):\n    return \"x\"\n" +
 		"# " + strings.Repeat("a", 70*1024) + "\n"
 	body := mustJSON(t, map[string]any{
-		"name": "too-big",
-		"code": over,
+		"bot_id": botID,
+		"name":   "too-big",
+		"code":   over,
 	})
 	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/commands"),
 		bytes.NewReader(body))
@@ -47,6 +77,7 @@ func TestCommandsAPI_CodeSizeLimit_AcceptsExactCap(t *testing.T) {
 	h := newTestHarness(t)
 	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
 	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+	botID := seedTelegramBot(t, h, client, csrf, "cmd-bot")
 
 	const header = "def handle(args):\n    return \"x\"\n"
 	pad := MaxCommandCodeBytes - len(header) - len("# \n")
@@ -58,8 +89,9 @@ func TestCommandsAPI_CodeSizeLimit_AcceptsExactCap(t *testing.T) {
 		t.Fatalf("payload size = %d, want %d", len(exact), MaxCommandCodeBytes)
 	}
 	body := mustJSON(t, map[string]any{
-		"name": "boundary",
-		"code": exact,
+		"bot_id": botID,
+		"name":   "boundary",
+		"code":   exact,
 	})
 	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/commands"),
 		bytes.NewReader(body))
@@ -80,11 +112,13 @@ func TestCommandsAPI_CodeSizeLimit_UpdateAlsoCapped(t *testing.T) {
 	h := newTestHarness(t)
 	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
 	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+	botID := seedTelegramBot(t, h, client, csrf, "cmd-bot")
 
 	// Create a tiny command first.
 	createBody := mustJSON(t, map[string]any{
-		"name": "growable",
-		"code": "def handle(args):\n    return \"tiny\"\n",
+		"bot_id": botID,
+		"name":   "growable",
+		"code":   "def handle(args):\n    return \"tiny\"\n",
 	})
 	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/commands"),
 		bytes.NewReader(createBody))
@@ -95,26 +129,20 @@ func TestCommandsAPI_CodeSizeLimit_UpdateAlsoCapped(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("seed create status = %d body=%s", resp.StatusCode, drain(resp))
 	}
+	var created commandView
+	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
 
-	// Discover the ID via list.
-	resp, err = client.Get(h.fullURL("/api/v1/commands"))
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Then PUT with > 64 KiB code → 400.
+	// Then PUT with > 64 KiB code → 400. We use the id from the
+	// create response so the test is robust against schema seeding
+	// reordering.
 	over := "def handle(args):\n    return \"x\"\n# " +
 		strings.Repeat("z", 70*1024) + "\n"
 	updBody := mustJSON(t, map[string]any{
 		"code": over,
 	})
-	// We need the ID; fetch via GET on /commands. Cheap path: parse
-	// the location-like envelope from POST response is unavailable
-	// here, so re-list and grab the lone item.
 	updReq, _ := http.NewRequest(http.MethodPut,
-		h.fullURL("/api/v1/commands/1"), bytes.NewReader(updBody))
+		h.fullURL("/api/v1/commands/"+strconv.FormatInt(created.ID, 10)), bytes.NewReader(updBody))
 	updResp, err := client.Do(withCSRF(updReq, csrf))
 	if err != nil {
 		t.Fatalf("update: %v", err)

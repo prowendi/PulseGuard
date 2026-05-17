@@ -60,12 +60,13 @@ func installFakeSender(t *testing.T, h *testHarness) *fakeLarkSender {
 	return fs
 }
 
-// seedLarkCommand inserts an enabled Starlark command owned by the
-// supplied bot's tenant.
+// seedLarkCommand inserts an enabled Starlark command bound to the
+// supplied bot.
 func seedLarkCommand(t *testing.T, h *testHarness, bot *domain.Bot, name, code string) *domain.Command {
 	t.Helper()
 	c := &domain.Command{
 		TenantID: bot.TenantID,
+		BotID:    bot.ID,
 		Name:     name,
 		Code:     code,
 		Enabled:  true,

@@ -127,19 +127,20 @@
       <section id="commands" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
         <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
           <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Commands</h2>
-          <p class="mt-0.5 text-[12.5px] text-slate-500">Telegram 用户在私聊发 <code class="font-mono">/&lt;name&gt; [args...]</code> 触发 Starlark 脚本（沙箱执行）。</p>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">每个命令绑定到一个 Bot；在该 Bot 的会话里发送 <code class="font-mono">/&lt;name&gt; [args...]</code> 触发 Starlark 脚本。同名命令可以绑定到不同 Bot（按 <code class="font-mono">(bot_id, name)</code> 唯一）。</p>
         </header>
         <div class="divide-y divide-slate-100 dark:divide-slate-800">
-          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/commands" "列命令" "" `{"items":[{"id":1,"name":"echo","code":"def handle(args): return ...","enabled":true}]}`) }}
-          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/commands" "新建" `{"name":"echo","description":"echo args","code":"def handle(args):\n    return ' '.join(args)","enabled":true}` `{"id":1,...}`) }}
-          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/commands/{id}" "详情" "" `{"id":1,...}`) }}
-          {{ template "apidoc-row" (mkAPI "PUT" "/api/v1/commands/{id}" "更新" `{"name":"echo","code":"...","enabled":true}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/commands" "列命令" "" `{"items":[{"id":1,"bot_id":2,"name":"echo","code":"def handle(args): return ...","enabled":true}]}`) }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/commands" "新建（必须指定 bot_id）" `{"bot_id":2,"name":"echo","description":"echo args","code":"def handle(args):\n    return ' '.join(args)","enabled":true}` `{"id":1,"bot_id":2,...}`) }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/commands/{id}" "详情" "" `{"id":1,"bot_id":2,...}`) }}
+          {{ template "apidoc-row" (mkAPI "PUT" "/api/v1/commands/{id}" "更新（bot_id 不可修改）" `{"name":"echo","code":"...","enabled":true}` `{"id":1,...}`) }}
           {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/commands/{id}" "删除" "" "204") }}
           {{ template "apidoc-row" (mkAPI "POST" "/api/v1/commands/{id}/test" "沙箱试跑；不写 subscriber" `{"args":["hello"]}` `{"output":"...","return":"hello","error":""}`) }}
         </div>
-        <div class="px-6 py-4 bg-slate-50 dark:bg-slate-900/60 text-[12.5px] text-slate-600 dark:text-slate-400">
+        <div class="px-6 py-4 bg-slate-50 dark:bg-slate-900/60 text-[12.5px] text-slate-600 dark:text-slate-400 space-y-1.5">
+          <p><strong class="text-slate-900 dark:text-white">绑定 Bot 的语义</strong>：<code class="font-mono">bot_id</code> 在创建时必填；只有该 Bot 的会话能触发本命令，跨 Bot 同名互不可见。如需切换绑定 Bot 请删除后重建（订阅人 / 状态机会同时清理）。</p>
           <p><strong class="text-slate-900 dark:text-white">Starlark 可用模块</strong>：<code class="font-mono">time.now()</code>、<code class="font-mono">json.encode/decode</code>、<code class="font-mono">http.get(url)</code>、<code class="font-mono">http.post(url, body)</code>、<code class="font-mono">print</code></p>
-          <p class="mt-1">脚本必须定义 <code class="font-mono">handle(args)</code> 函数；执行超时 10s；输出上限 8KB；代码上限 64KB；HTTP 不允许私网/链路本地/metadata，不跟 redirect。</p>
+          <p>脚本必须定义 <code class="font-mono">handle(args)</code> 函数；执行超时 10s；输出上限 8KB；代码上限 64KB；HTTP 不允许私网/链路本地/metadata，不跟 redirect。</p>
         </div>
       </section>
 

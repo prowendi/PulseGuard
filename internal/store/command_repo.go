@@ -26,12 +26,19 @@ func (r *CommandRepo) Insert(ctx context.Context, c *domain.Command) error {
 	if err := validateCommand(c); err != nil {
 		return err
 	}
+	if err := r.ensureBotOwnership(ctx, c.TenantID, c.BotID); err != nil {
+		return err
+	}
 	now := nowMs(r.clock)
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO commands (tenant_id, name, description, code, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.TenantID, c.Name, c.Description, c.Code, boolToIntCmd(c.Enabled), now, now)
+		INSERT INTO commands (tenant_id, bot_id, name, description, code, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.TenantID, c.BotID, c.Name, c.Description, c.Code, boolToIntCmd(c.Enabled), now, now)
 	if err != nil {
+		if isUniqueConstraintErr(err) {
+			return fmt.Errorf("%w: command name %q already exists for this bot",
+				domain.ErrConflict, c.Name)
+		}
 		return fmt.Errorf("insert command: %w", err)
 	}
 	id, err := res.LastInsertId()
@@ -44,7 +51,11 @@ func (r *CommandRepo) Insert(ctx context.Context, c *domain.Command) error {
 	return nil
 }
 
-// Update mutates an existing command owned by the same tenant.
+// Update mutates an existing command owned by the same tenant. BotID
+// is locked at insert time: an operator who wants to move a command
+// to a different bot must delete + recreate, which is intentional
+// because subscribers carry stale (command_id, bot_id) pairs that
+// would silently break under a re-binding.
 func (r *CommandRepo) Update(ctx context.Context, c *domain.Command) error {
 	if err := validateCommand(c); err != nil {
 		return err
@@ -59,6 +70,10 @@ func (r *CommandRepo) Update(ctx context.Context, c *domain.Command) error {
 		 WHERE id = ? AND tenant_id = ?`,
 		c.Name, c.Description, c.Code, boolToIntCmd(c.Enabled), now, c.ID, c.TenantID)
 	if err != nil {
+		if isUniqueConstraintErr(err) {
+			return fmt.Errorf("%w: command name %q already exists for this bot",
+				domain.ErrConflict, c.Name)
+		}
 		return fmt.Errorf("update command: %w", err)
 	}
 	n, err := res.RowsAffected()
@@ -92,23 +107,28 @@ func (r *CommandRepo) Delete(ctx context.Context, tenantID, id int64) error {
 // GetByID fetches a command scoped to a tenant.
 func (r *CommandRepo) GetByID(ctx context.Context, tenantID, id int64) (*domain.Command, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, name, description, code, enabled, created_at, updated_at
+		SELECT id, tenant_id, bot_id, name, description, code, enabled, created_at, updated_at
 		  FROM commands WHERE id = ? AND tenant_id = ?`, id, tenantID)
 	return scanCommand(row)
 }
 
-// GetByTenantAndName fetches a command by (tenant, name).
+// GetByTenantAndName fetches a command by (tenant, name). Ambiguous
+// under per-bot scoping (a tenant can have /name on two different
+// bots), so this returns the lowest-id match — historical signature
+// preserved for callers that don't yet know about bot_id. Prefer
+// GetByBotAndName whenever the caller has a bot id in scope.
 func (r *CommandRepo) GetByTenantAndName(ctx context.Context, tenantID int64, name string) (*domain.Command, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, name, description, code, enabled, created_at, updated_at
-		  FROM commands WHERE tenant_id = ? AND name = ?`, tenantID, name)
+		SELECT id, tenant_id, bot_id, name, description, code, enabled, created_at, updated_at
+		  FROM commands WHERE tenant_id = ? AND name = ?
+		  ORDER BY id ASC LIMIT 1`, tenantID, name)
 	return scanCommand(row)
 }
 
 // ListByTenant returns every command of a tenant (smallest id first).
 func (r *CommandRepo) ListByTenant(ctx context.Context, tenantID int64) ([]*domain.Command, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, tenant_id, name, description, code, enabled, created_at, updated_at
+		SELECT id, tenant_id, bot_id, name, description, code, enabled, created_at, updated_at
 		  FROM commands WHERE tenant_id = ? ORDER BY id ASC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list commands: %w", err)
@@ -125,37 +145,35 @@ func (r *CommandRepo) ListByTenant(ctx context.Context, tenantID int64) ([]*doma
 	return out, rows.Err()
 }
 
-// GetByBotAndName joins commands → bots so the Telegram listener can
-// resolve "command N triggered from bot M" without first looking up
-// the tenant_id. Returns ErrNotFound on unknown bot or command, and on
-// disabled commands (we treat disabled = absent for the dispatcher).
+// GetByBotAndName is the listener's hot-path resolver. Under per-bot
+// scoping the lookup is now a direct match on the commands row —
+// no JOIN to bots needed. Returns ErrNotFound on unknown bot/name and
+// on disabled commands (disabled = absent for the dispatcher).
 func (r *CommandRepo) GetByBotAndName(ctx context.Context, botID int64, name string) (*domain.Command, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT c.id, c.tenant_id, c.name, c.description, c.code, c.enabled, c.created_at, c.updated_at
-		  FROM commands c
-		  JOIN bots b ON b.tenant_id = c.tenant_id
-		 WHERE b.id = ?
-		   AND c.name = ?
-		   AND c.enabled = 1
+		SELECT id, tenant_id, bot_id, name, description, code, enabled, created_at, updated_at
+		  FROM commands
+		 WHERE bot_id = ?
+		   AND name = ?
+		   AND enabled = 1
 		 LIMIT 1`, botID, name)
 	return scanCommand(row)
 }
 
-// ListByBot returns every ENABLED command owned by the same tenant as
-// botID. Used by the Telegram listener's setMyCommands publisher and
-// /commands built-in: both publish a public catalog, so disabled rows
-// MUST stay hidden (same "disabled = absent" rule the dispatcher uses).
+// ListByBot returns every ENABLED command bound to botID. Powers the
+// Telegram listener's setMyCommands publisher and the /commands
+// built-in: both publish a public catalog, so disabled rows MUST stay
+// hidden (same "disabled = absent" rule the dispatcher uses).
 //
 // botID is the PulseGuard DB primary key (bots.id), NOT the Telegram
 // numeric token prefix — same convention as GetByBotAndName.
 func (r *CommandRepo) ListByBot(ctx context.Context, botID int64) ([]*domain.Command, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT c.id, c.tenant_id, c.name, c.description, c.code, c.enabled, c.created_at, c.updated_at
-		  FROM commands c
-		  JOIN bots b ON b.tenant_id = c.tenant_id
-		 WHERE b.id = ?
-		   AND c.enabled = 1
-		 ORDER BY c.id ASC`, botID)
+		SELECT id, tenant_id, bot_id, name, description, code, enabled, created_at, updated_at
+		  FROM commands
+		 WHERE bot_id = ?
+		   AND enabled = 1
+		 ORDER BY id ASC`, botID)
 	if err != nil {
 		return nil, fmt.Errorf("list commands by bot: %w", err)
 	}
@@ -177,7 +195,7 @@ func scanCommand(s interface {
 	c := &domain.Command{}
 	var enabled int
 	var createdMs, updatedMs int64
-	err := s.Scan(&c.ID, &c.TenantID, &c.Name, &c.Description, &c.Code, &enabled, &createdMs, &updatedMs)
+	err := s.Scan(&c.ID, &c.TenantID, &c.BotID, &c.Name, &c.Description, &c.Code, &enabled, &createdMs, &updatedMs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -199,12 +217,38 @@ func validateCommand(c *domain.Command) error {
 	if c.TenantID == 0 {
 		return fmt.Errorf("%w: command tenant_id is zero", domain.ErrValidation)
 	}
+	if c.BotID == 0 {
+		return fmt.Errorf("%w: command bot_id is zero", domain.ErrValidation)
+	}
 	c.Name = strings.TrimSpace(c.Name)
 	if c.Name == "" {
 		return fmt.Errorf("%w: command name is empty", domain.ErrValidation)
 	}
 	if c.Code == "" {
 		return fmt.Errorf("%w: command code is empty", domain.ErrValidation)
+	}
+	return nil
+}
+
+// ensureBotOwnership verifies that the (bot_id, tenant_id) pair is
+// consistent: the bot must exist AND belong to the supplied tenant.
+// This is a defence-in-depth check on top of the FK constraint —
+// without it a tenant could attach a command to another tenant's bot
+// by supplying its raw id, and the FK alone would happily allow it
+// (FKs check bot existence, not tenant ownership).
+func (r *CommandRepo) ensureBotOwnership(ctx context.Context, tenantID, botID int64) error {
+	var ownerTenant int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT tenant_id FROM bots WHERE id = ?`, botID).Scan(&ownerTenant)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: bot %d not found", domain.ErrValidation, botID)
+	}
+	if err != nil {
+		return fmt.Errorf("verify bot ownership: %w", err)
+	}
+	if ownerTenant != tenantID {
+		return fmt.Errorf("%w: bot %d does not belong to tenant %d",
+			domain.ErrValidation, botID, tenantID)
 	}
 	return nil
 }
