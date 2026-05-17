@@ -1,35 +1,106 @@
-{{ define "sidebar" }}<aside class="w-60 shrink-0 bg-slate-900 text-slate-100 flex flex-col">
-  <div class="h-14 px-5 flex items-center border-b border-slate-800">
-    <a href="/ui/dashboard" class="text-lg font-semibold tracking-tight text-white">PulseGuard</a>
+{{ define "sidebar" }}<aside class="w-64 shrink-0 bg-gradient-to-b from-slate-950 to-slate-900 text-slate-300 flex flex-col border-r border-slate-900/70">
+  <div class="h-16 px-5 flex items-center gap-2.5 border-b border-white/5">
+    <a href="/ui/dashboard" class="flex items-center gap-2.5 group">
+      <span class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-sm shadow-emerald-500/30 ring-1 ring-emerald-400/30">
+        <svg viewBox="0 0 32 32" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h5l2-7 4 12 3-9 2 4h6"/></svg>
+      </span>
+      <span class="text-base font-semibold tracking-tight text-white">PulseGuard</span>
+    </a>
   </div>
-  <nav class="flex-1 px-3 py-4 space-y-1 text-sm">
-    <a href="/ui/dashboard" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "dashboard" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "dashboard" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>概览</a>
-    <a href="/ui/bots" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "bots" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "bots" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>Bots</a>
-    <a href="/ui/templates" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "templates" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "templates" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>模板</a>
-    <a href="/ui/channels" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "channels" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "channels" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>通道</a>
-    <a href="/ui/commands" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "commands" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "commands" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>命令</a>
-    <a href="/ui/subscribers" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "subscribers" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "subscribers" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>订阅者</a>
-    <a href="/ui/logs" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "logs" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "logs" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>推送日志</a>
-    <a href="/ui/deadletters" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "deadletters" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "deadletters" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>死信队列</a>
+
+  <nav class="flex-1 overflow-y-auto px-3 py-5 text-sm space-y-6">
+    <div>
+      <div class="px-3 mb-2 text-[10.5px] uppercase tracking-[0.18em] text-slate-500 font-semibold">接入</div>
+      <div class="space-y-0.5">
+        {{ template "navlink" (mkNavItem . "bots" "/ui/bots" "Bots" "M16 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 9a7 7 0 0 1 14 0H9z") }}
+        {{ template "navlink" (mkNavItem . "templates" "/ui/templates" "模板" "M4 5a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5zm10 0v5h5") }}
+        {{ template "navlink" (mkNavItem . "channels" "/ui/channels" "通道" "M4 7h6l2 3h8M4 13h6l2 3h8") }}
+      </div>
+    </div>
+    <div>
+      <div class="px-3 mb-2 text-[10.5px] uppercase tracking-[0.18em] text-slate-500 font-semibold">运行</div>
+      <div class="space-y-0.5">
+        {{ template "navlink" (mkNavItem . "commands" "/ui/commands" "命令" "M7 9l3 3-3 3M13 15h6") }}
+        {{ template "navlink" (mkNavItem . "subscribers" "/ui/subscribers" "订阅者" "M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm10 0v6m-3-3h6") }}
+        {{ template "navlink" (mkNavItem . "logs" "/ui/logs" "推送日志" "M9 5h6l4 4v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 9h6m-6 4h4") }}
+        {{ template "navlink" (mkNavItem . "deadletters" "/ui/deadletters" "死信队列" "M12 9v4m0 4h.01M5.07 19h13.86a2 2 0 0 0 1.74-3l-6.93-12a2 2 0 0 0-3.46 0L3.33 16a2 2 0 0 0 1.74 3z") }}
+      </div>
+    </div>
     {{ if eq .Tenant.Role "admin" }}
-      <div class="pt-3 mt-3 border-t border-slate-800 text-[11px] uppercase tracking-wider text-slate-500 px-3 pb-1">管理员</div>
-      <a href="/ui/invites" class="flex items-center gap-2 px-3 py-2 rounded-md transition-colors {{ if eq .Active "invites" }}bg-slate-800 text-white{{ else }}text-slate-300 hover:bg-slate-800 hover:text-white{{ end }}"><span class="w-1.5 h-1.5 rounded-full {{ if eq .Active "invites" }}bg-blue-400{{ else }}bg-slate-600{{ end }}"></span>邀请码</a>
+    <div>
+      <div class="px-3 mb-2 text-[10.5px] uppercase tracking-[0.18em] text-slate-500 font-semibold">管理</div>
+      <div class="space-y-0.5">
+        {{ template "navlink" (mkNavItem . "invites" "/ui/invites" "邀请码" "M16 12a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1") }}
+      </div>
+    </div>
     {{ end }}
   </nav>
-  <div class="px-5 py-3 text-[11px] text-slate-500 border-t border-slate-800 truncate">{{ .Tenant.Email }}</div>
+
+  <div class="px-3 pb-4 pt-3 border-t border-white/5">
+    <div class="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/5 transition-colors">
+      <span class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-white font-semibold text-sm shadow-inner ring-1 ring-emerald-300/30">{{ avatarInitial .Tenant.Email }}</span>
+      <div class="flex-1 min-w-0">
+        <div class="text-[12.5px] text-white font-medium truncate">{{ .Tenant.Email }}</div>
+        <div class="text-[10.5px] text-slate-500 uppercase tracking-wider">{{ .Tenant.Role }}</div>
+      </div>
+      <form method="POST" action="/ui/logout" class="inline shrink-0">
+        <input type="hidden" name="csrf" value="{{ .CSRF }}">
+        <button type="submit" title="退出" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:text-white hover:bg-white/5 transition-colors">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        </button>
+      </form>
+    </div>
+  </div>
 </aside>{{ end }}
 
-{{ define "topbar" }}<header class="h-14 bg-white border-b border-slate-200 shadow-sm flex items-center justify-between px-6 sticky top-0 z-10">
-  <div class="flex items-center gap-3">
-    <h1 class="text-base font-semibold text-slate-900">{{ .Title }}</h1>
+{{ define "navlink" }}<a href="{{ .Href }}" class="psg-nav-link relative flex items-center gap-3 px-3 py-2 rounded-md transition-colors group {{ if .Active }}is-active{{ else }}text-slate-400 hover:text-white hover:bg-white/5{{ end }}">
+  <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 {{ if .Active }}text-emerald-400{{ else }}text-slate-500 group-hover:text-slate-300{{ end }}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ .Icon }}"/></svg>
+  <span class="text-[13px] font-medium">{{ .Label }}</span>
+</a>{{ end }}
+
+{{ define "topbar" }}<header class="h-16 bg-white/85 backdrop-blur border-b border-slate-200/80 flex items-center justify-between px-6 sticky top-0 z-20 dark:bg-slate-950/70 dark:border-slate-800">
+  <div class="flex items-center gap-3 min-w-0">
+    <nav aria-label="breadcrumb" class="flex items-center gap-2 text-sm">
+      <a href="/ui/dashboard" class="text-slate-500 hover:text-emerald-600 transition-colors font-medium">PulseGuard</a>
+      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-slate-300" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      <span class="text-slate-900 font-semibold truncate dark:text-white">{{ .Title }}</span>
+    </nav>
   </div>
-  <div class="flex items-center gap-3 text-sm">
-    <span class="text-slate-600 hidden sm:inline">{{ .Tenant.Email }}</span>
-    {{ if eq .Tenant.Role "admin" }}<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">admin</span>{{ end }}
-    <form method="POST" action="/ui/logout" class="inline">
-      <input type="hidden" name="csrf" value="{{ .CSRF }}">
-      <button type="submit" class="text-slate-600 hover:text-slate-900 transition-colors">退出</button>
-    </form>
+  <div class="flex items-center gap-2.5 text-sm">
+    <div class="hidden md:inline-flex items-center gap-2 rounded-full bg-emerald-50 text-emerald-700 px-3 py-1 text-[12px] font-medium ring-1 ring-emerald-100">
+      <span class="psg-pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+      运行中
+    </div>
+    <button type="button" title="切换主题（V2 占位 — 系统自动跟随）" class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800">
+      <svg viewBox="0 0 24 24" class="h-4 w-4 dark:hidden" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+      <svg viewBox="0 0 24 24" class="h-4 w-4 hidden dark:inline" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+
+    <div class="relative">
+      <button type="button" data-psg-toggle="psg-user-menu" aria-expanded="false" class="inline-flex items-center gap-2 rounded-lg pl-2 pr-1.5 py-1 text-slate-700 hover:bg-slate-100 transition-colors dark:text-slate-200 dark:hover:bg-slate-800">
+        <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-white text-xs font-semibold ring-1 ring-emerald-300/40">{{ avatarInitial .Tenant.Email }}</span>
+        <span class="hidden md:inline text-[13px] font-medium max-w-[160px] truncate">{{ .Tenant.Email }}</span>
+        {{ if eq .Tenant.Role "admin" }}<span class="hidden sm:inline px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 ring-1 ring-amber-200">admin</span>{{ end }}
+        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div id="psg-user-menu" data-psg-popover class="hidden absolute right-0 top-full mt-2 w-56 rounded-xl bg-white shadow-lg ring-1 ring-slate-900/5 border border-slate-100 py-1.5 z-30 dark:bg-slate-900 dark:ring-white/10 dark:border-slate-800">
+        <div class="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
+          <div class="text-[11px] uppercase tracking-wider text-slate-400">已登录</div>
+          <div class="text-[13px] font-medium text-slate-900 truncate dark:text-white">{{ .Tenant.Email }}</div>
+        </div>
+        <a href="/ui/dashboard" class="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors dark:text-slate-200 dark:hover:bg-slate-800">
+          <svg viewBox="0 0 24 24" class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+          回到概览
+        </a>
+        <form method="POST" action="/ui/logout" class="block">
+          <input type="hidden" name="csrf" value="{{ .CSRF }}">
+          <button type="submit" class="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-rose-600 hover:bg-rose-50 transition-colors dark:hover:bg-rose-500/10">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            退出登录
+          </button>
+        </form>
+      </div>
+    </div>
   </div>
 </header>{{ end }}
 
