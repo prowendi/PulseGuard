@@ -18,6 +18,7 @@
         <a href="#subscribers" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Subscribers</a>
         <a href="#logs" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Logs / DLQ</a>
         <a href="#invites" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Invites (admin)</a>
+        <a href="#lark-events" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Lark 事件</a>
         <a href="#errors" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">错误码</a>
       </nav>
     </aside>
@@ -79,9 +80,10 @@
           <p><strong class="text-slate-900 dark:text-white">platform 字段取值</strong>：</p>
           <ul class="list-disc pl-5 space-y-1.5">
             <li><code class="font-mono">telegram</code>：bot_token 形如 <code class="font-mono">123456:ABC-DEF...</code>；自动启动长轮询 listener；支持 inline keyboard、editMessageText、自定义命令、setMyCommands</li>
-            <li><code class="font-mono">lark</code>：bot_token 填完整 Lark 自定义机器人 webhook：<code class="font-mono break-all">https://open.feishu.cn/open-apis/bot/v2/hook/&lt;key&gt;</code>。Channel.chat_id 字段在 Lark 下无意义（webhook 已绑定群）；不启动 listener（Lark 自定义 webhook 单向）；inline keyboard 等 Telegram 特性静默跳过；editMessageText 自动 fallback 为新发送一条文本消息</li>
+            <li><code class="font-mono">lark</code>（bot_kind=webhook）：bot_token 填完整 Lark 自定义机器人 webhook：<code class="font-mono break-all">https://open.feishu.cn/open-apis/bot/v2/hook/&lt;key&gt;</code>。Channel.chat_id 字段在 Webhook 下无意义；不启动 listener；inline keyboard 等 Telegram 特性静默跳过；editMessageText 自动 fallback 为新发送一条文本消息</li>
+            <li><code class="font-mono">lark</code>（bot_kind=app）：填 <code class="font-mono">app_id</code>+<code class="font-mono">app_secret</code>+<code class="font-mono">encrypt_key</code>+<code class="font-mono">verify_token</code>。可通过 IM API 主动发送消息到任意 chat_id，并接收 Lark 事件订阅推送（监听用户消息，触发 Starlark 命令）。app_secret 与 encrypt_key AES-GCM 加密入库</li>
           </ul>
-          <p class="text-[11.5px] text-slate-400">runtime 按 bot_token 前缀自动路由：HTTPS 起手 → Lark，其余按 Telegram 处理。</p>
+          <p class="text-[11.5px] text-slate-400">runtime 按 bot_kind 自动路由：app → IM API（用 tenant_access_token），webhook → 自定义机器人 URL，telegram → Bot API。</p>
         </div>
       </section>
 
@@ -176,6 +178,29 @@
           {{ template "apidoc-row" (mkAPI "GET" "/api/v1/invites" "列本 admin 创建的邀请码" "" `{"items":[{"code":"ABC...","used_at":null,"expires_at":"..."}]}`) }}
           {{ template "apidoc-row" (mkAPI "POST" "/api/v1/invites" "批量生成" `{"ttl_seconds":86400,"count":5}` `{"codes":["..."]}`) }}
           {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/invites/{code}" "撤销未使用的邀请码" "" "204") }}
+        </div>
+      </section>
+
+      {{/* ===== LARK EVENTS ===== */}}
+      <section id="lark-events" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Lark 事件订阅</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">飞书开放平台 → "事件订阅" 配置回调地址；body 签名（HMAC）即身份认证，无需 PulseGuard session。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/lark/events" "事件回调入口（公网）" `{"type":"url_verification","token":"<verify_token>","challenge":"abc"}` `{"challenge":"abc"}`) }}
+        </div>
+        <div class="px-6 py-4 border-t border-slate-100 dark:border-slate-800 text-[12.5px] text-slate-600 dark:text-slate-400 space-y-2.5">
+          <p><strong class="text-slate-900 dark:text-white">配置流程</strong>：</p>
+          <ol class="list-decimal pl-5 space-y-1.5">
+            <li>在 PulseGuard 创建 Bot 时选 platform=<code class="font-mono">lark</code>、bot_kind=<code class="font-mono">app</code>，填 app_id / app_secret / encrypt_key / verify_token（与飞书"凭证与基础信息" + "事件订阅"页签一致）</li>
+            <li>在飞书"事件订阅"页填回调地址 <code class="font-mono">https://&lt;your-host&gt;/api/v1/lark/events</code></li>
+            <li>点"保存"，飞书会发 <code class="font-mono">url_verification</code> 探测包；PulseGuard 校验 verify_token + 回声 challenge 完成握手</li>
+            <li>在"事件订阅 → 添加事件"开启 <code class="font-mono">im.message.receive_v1</code>（接收消息）</li>
+          </ol>
+          <p><strong class="text-slate-900 dark:text-white">签名校验</strong>：飞书每个事件请求都带 <code class="font-mono">X-Lark-Signature</code> 头（HMAC-SHA256(encrypt_key, timestamp + nonce + body)）；PulseGuard 用对应 bot 的 encrypt_key 重算并 constant-time 比对，签名不匹配的请求 401 拒绝。</p>
+          <p><strong class="text-slate-900 dark:text-white">命令调度</strong>：收到 <code class="font-mono">im.message.receive_v1</code> 后，按文本首词匹配本租户已注册的 Starlark 命令；命中即在 10s 沙箱里执行，输出回贴到原对话。未命中静默丢弃。</p>
+          <p class="text-[11.5px] text-slate-400">该端点位于公开 <code class="font-mono">/api/v1</code> 路径下，仍受全局 IP 限流保护（默认 60 req/min/IP）。</p>
         </div>
       </section>
 
