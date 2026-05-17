@@ -24,6 +24,11 @@ type InviteRepo interface {
 	// ErrNotFound if no row matches that (code, created_by) pair, and
 	// ErrInviteInvalid if the code has already been consumed.
 	Delete(ctx context.Context, code string, adminID int64) error
+	// CountByCreatorSince counts invites adminID created at or after
+	// `since`. Used by the web layer to enforce the per-admin daily
+	// generation cap so a compromised admin cannot mint unbounded
+	// invites in a tight loop.
+	CountByCreatorSince(ctx context.Context, adminID int64, since time.Time) (int, error)
 }
 
 // BotRepo manages tenant-owned bot rows. Implementations encrypt/decrypt

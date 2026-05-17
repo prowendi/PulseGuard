@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wendi/pulseguard/internal/auth"
 	"github.com/wendi/pulseguard/internal/domain"
@@ -256,4 +258,120 @@ func bcryptHash(t *testing.T, password string) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// TestInvitesAPIDailyCap drives the per-admin daily cap. We pre-seed
+// (cap-1) invites directly so we can drive the boundary in a few HTTP
+// calls; the actual handler logic is exercised end-to-end through
+// requests, including the boundary count + remaining-today formatting.
+func TestInvitesAPIDailyCap(t *testing.T) {
+	h := newTestHarness(t)
+	admin, _ := h.seedAdmin("admin@example.com", "adminpass", "BOOTSTRAP")
+	client, csrf := adminAPIClient(t, h, "admin@example.com", "adminpass")
+
+	// Pre-fill the day's quota minus 2 by inserting directly through
+	// the repo so the test runs in O(seconds), not O(quota * round-trip).
+	// The bootstrap invite counts toward the cap; the seed already gave
+	// us one, so we need cap-2 more to leave room for exactly 1.
+	preload := InvitesPerAdminDailyCap - 2
+	for i := 0; i < preload; i++ {
+		inv := &domain.InviteCode{
+			Code: invitePreloadCode(i), CreatedBy: admin.ID,
+		}
+		if err := h.deps.Invites.Insert(context.Background(), inv); err != nil {
+			t.Fatalf("preload %d: %v", i, err)
+		}
+	}
+
+	// Verify count is at cap-1 (preload + bootstrap).
+	cnt, err := h.deps.Invites.CountByCreatorSince(context.Background(), admin.ID,
+		time.Date(h.clock.T.Year(), h.clock.T.Month(), h.clock.T.Day(), 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if cnt != InvitesPerAdminDailyCap-1 {
+		t.Fatalf("pre-cap count = %d want %d", cnt, InvitesPerAdminDailyCap-1)
+	}
+
+	// 1. Creating 1 more is allowed (lands on cap exactly).
+	body := mustJSON(t, map[string]any{"count": 1, "ttl_seconds": 0})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/invites"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("at-cap create: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("at-cap status = %d, want 201; body=%s", resp.StatusCode, drain(resp))
+	}
+	resp.Body.Close()
+
+	// 2. The very next request must be refused with 429 + Retry-After.
+	body2 := mustJSON(t, map[string]any{"count": 1, "ttl_seconds": 0})
+	req2, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/invites"), bytes.NewReader(body2))
+	resp2, err := client.Do(withCSRF(req2, csrf))
+	if err != nil {
+		t.Fatalf("over-cap create: %v", err)
+	}
+	if resp2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap status = %d, want 429; body=%s", resp2.StatusCode, drain(resp2))
+	}
+	if ra := resp2.Header.Get("Retry-After"); ra == "" {
+		t.Fatalf("over-cap response missing Retry-After header")
+	}
+	var errBody map[string]any
+	_ = json.NewDecoder(resp2.Body).Decode(&errBody)
+	resp2.Body.Close()
+	errObj, _ := errBody["error"].(map[string]any)
+	if code, _ := errObj["code"].(string); code != "RATE_LIMITED" {
+		t.Fatalf("over-cap error code = %q want RATE_LIMITED", code)
+	}
+}
+
+// TestInvitesAPIDailyCap_BulkRejected covers the bulk path: a single
+// request that asks for more invites than the remaining budget must
+// fail atomically (no partial creation).
+func TestInvitesAPIDailyCap_BulkRejected(t *testing.T) {
+	h := newTestHarness(t)
+	admin, _ := h.seedAdmin("admin@example.com", "adminpass", "BOOTSTRAP")
+	client, csrf := adminAPIClient(t, h, "admin@example.com", "adminpass")
+
+	// Pre-fill so only 5 budget remain for the day.
+	preload := InvitesPerAdminDailyCap - 1 /*bootstrap*/ - 5
+	for i := 0; i < preload; i++ {
+		inv := &domain.InviteCode{
+			Code: invitePreloadCode(i), CreatedBy: admin.ID,
+		}
+		if err := h.deps.Invites.Insert(context.Background(), inv); err != nil {
+			t.Fatalf("preload %d: %v", i, err)
+		}
+	}
+
+	// Ask for 10 in one shot — must be rejected wholesale.
+	body := mustJSON(t, map[string]any{"count": 10, "ttl_seconds": 0})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/invites"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("bulk over: %v", err)
+	}
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("bulk over status = %d want 429; body=%s", resp.StatusCode, drain(resp))
+	}
+	resp.Body.Close()
+
+	// Verify no invites were created — count must still equal preload+bootstrap.
+	cnt, err := h.deps.Invites.CountByCreatorSince(context.Background(), admin.ID,
+		time.Date(h.clock.T.Year(), h.clock.T.Month(), h.clock.T.Day(), 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if want := preload + 1; cnt != want {
+		t.Fatalf("post-reject count = %d want %d (no invites should have leaked through)", cnt, want)
+	}
+}
+
+// invitePreloadCode mints a unique invite code for the daily-cap
+// pre-seed loop. We avoid the random URL token helper to keep tests
+// fully deterministic.
+func invitePreloadCode(i int) string {
+	return "PRELOAD-" + strconv.Itoa(i)
 }

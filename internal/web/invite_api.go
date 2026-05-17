@@ -2,7 +2,9 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +53,15 @@ type inviteCreatePayload struct {
 	Count      int `json:"count"`
 }
 
+// InvitesPerAdminDailyCap is the hard ceiling on how many invite codes
+// a single admin can generate in a rolling UTC day. Sized for a
+// reasonable onboarding burst (hundreds of new tenants per admin per
+// day is plenty) while preventing a compromised admin from bulk-minting
+// codes that could be reused to register thousands of accounts.
+//
+// Refs: round2-security-report S-L3.
+const InvitesPerAdminDailyCap = 500
+
 func installInvitesAPIRoutes(r chi.Router, deps Deps) {
 	r.Get("/invites", apiInviteList(deps))
 	r.Post("/invites", apiInviteCreate(deps))
@@ -84,6 +95,36 @@ func apiInviteCreate(deps Deps) http.HandlerFunc {
 			return
 		}
 		admin := wmw.Tenant(r.Context())
+		// Enforce per-admin per-UTC-day cap. The window starts at the
+		// most recent UTC midnight relative to the server clock; using
+		// a real-time clock here (rather than deps.Clock) keeps the
+		// behaviour aligned with the wall-clock day operators see in
+		// their dashboards while remaining cheap (one SELECT COUNT).
+		nowUTC := deps.Clock.Now().UTC()
+		windowStart := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
+		existing, err := deps.Invites.CountByCreatorSince(r.Context(), admin.ID, windowStart)
+		if err != nil {
+			writeRepoError(w, r, deps, err)
+			return
+		}
+		if existing+count > InvitesPerAdminDailyCap {
+			remaining := InvitesPerAdminDailyCap - existing
+			if remaining < 0 {
+				remaining = 0
+			}
+			// Retry-After is the seconds-until-UTC-midnight (the cap
+			// resets at that boundary). Surface it so a polite client
+			// can back off without hammering us.
+			retryAfter := int(time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day()+1, 0, 0, 0, 0, time.UTC).Sub(nowUTC).Seconds())
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+			writeError(w, r, http.StatusTooManyRequests, "RATE_LIMITED",
+				fmt.Sprintf("daily invite cap reached (%d/%d); %d remaining today",
+					existing, InvitesPerAdminDailyCap, remaining))
+			return
+		}
 		created := make([]inviteView, 0, count)
 		for i := 0; i < count; i++ {
 			inv, err := deps.Auth.GenerateInvite(r.Context(), admin.ID, ttl)

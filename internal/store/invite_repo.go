@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/wendi/pulseguard/internal/domain"
 )
@@ -127,6 +128,25 @@ func (r *InviteRepo) ListByCreator(ctx context.Context, adminID int64) ([]*domai
 		out = append(out, inv)
 	}
 	return out, rows.Err()
+}
+
+// CountByCreatorSince counts invites created by adminID with
+// created_at >= since (the boundary uses milliseconds, matching the
+// other timestamp columns). Callers should round `since` to the start
+// of the relevant window (e.g. midnight UTC for the daily cap).
+func (r *InviteRepo) CountByCreatorSince(ctx context.Context, adminID int64, since time.Time) (int, error) {
+	if adminID <= 0 {
+		return 0, fmt.Errorf("%w: adminID must be > 0", domain.ErrValidation)
+	}
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM invite_codes
+		 WHERE created_by = ? AND created_at >= ?`,
+		adminID, since.UnixMilli()).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count invites since: %w", err)
+	}
+	return n, nil
 }
 
 // Delete removes an unused invite code owned by adminID. Returns

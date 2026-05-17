@@ -189,3 +189,61 @@ func TestInviteRepo_Delete(t *testing.T) {
 		t.Fatalf("missing Delete = %v want ErrNotFound", err)
 	}
 }
+
+func TestInviteRepo_CountByCreatorSince(t *testing.T) {
+	tr, ir, admin, clk := inviteSetup(t)
+	ctx := context.Background()
+
+	// Pre-window: invite at clk - 25h. windowStart = today UTC midnight
+	// computed from clk.T = 2026-05-17 12:00 UTC, so windowStart =
+	// 2026-05-17 00:00 UTC.
+	windowStart := time.Date(clk.T.Year(), clk.T.Month(), clk.T.Day(), 0, 0, 0, 0, time.UTC)
+
+	// Insert a pre-window invite (clock at 25h before midnight).
+	old := clk.T
+	clk.T = windowStart.Add(-25 * time.Hour)
+	if err := ir.Insert(ctx, &domain.InviteCode{Code: "OLD-1", CreatedBy: admin.ID}); err != nil {
+		t.Fatalf("insert old: %v", err)
+	}
+	clk.T = old
+
+	// Insert 3 in-window invites at the configured clock (12:00 UTC).
+	for _, c := range []string{"NEW-1", "NEW-2", "NEW-3"} {
+		if err := ir.Insert(ctx, &domain.InviteCode{Code: c, CreatedBy: admin.ID}); err != nil {
+			t.Fatalf("insert %s: %v", c, err)
+		}
+	}
+
+	got, err := ir.CountByCreatorSince(ctx, admin.ID, windowStart)
+	if err != nil {
+		t.Fatalf("CountByCreatorSince: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("count = %d want 3 (older invite must be excluded)", got)
+	}
+
+	// A second admin's invites must not bleed in.
+	other := makeTenant("other-admin@x.com")
+	other.Role = domain.RoleAdmin
+	if err := tr.Insert(ctx, other); err != nil {
+		t.Fatalf("seed other: %v", err)
+	}
+	if err := ir.Insert(ctx, &domain.InviteCode{Code: "OTHER-1", CreatedBy: other.ID}); err != nil {
+		t.Fatalf("insert other: %v", err)
+	}
+	got, err = ir.CountByCreatorSince(ctx, admin.ID, windowStart)
+	if err != nil {
+		t.Fatalf("CountByCreatorSince after other: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("count = %d want 3 (other admin must not bleed in)", got)
+	}
+}
+
+func TestInviteRepo_CountByCreatorSince_RejectsZeroAdmin(t *testing.T) {
+	_, ir, _, _ := inviteSetup(t)
+	_, err := ir.CountByCreatorSince(context.Background(), 0, time.Now())
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("zero admin err = %v want ErrValidation", err)
+	}
+}
