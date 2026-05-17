@@ -1,42 +1,46 @@
 {{ define "subscribers-page" }}{{ template "layout-open" . }}
-<div class="bg-white rounded-lg shadow border border-slate-200 overflow-hidden">
-  <div class="px-6 py-4 border-b border-slate-200">
-    <h2 class="text-base font-semibold text-slate-900">订阅者</h2>
-    <p class="text-xs text-slate-500 mt-0.5">每次有用户在 Telegram 触发命令时自动记录。共 {{ len .Subscribers }} 条。</p>
-  </div>
-  <div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-slate-200 text-sm">
-      <thead class="bg-slate-50">
-        <tr>
-          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">ID</th>
-          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">命令</th>
-          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Bot</th>
-          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Chat ID</th>
-          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">平台</th>
-          <th class="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">最后活跃</th>
-          <th class="px-3 py-2 text-right font-medium text-slate-500 uppercase tracking-wider text-xs">操作</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-100">
-        {{ range .Subscribers }}
-        <tr class="even:bg-slate-50/40">
-          <td class="px-3 py-2 font-mono text-xs text-slate-500">{{ .ID }}</td>
-          <td class="px-3 py-2 text-slate-700">#{{ .CommandID }}</td>
-          <td class="px-3 py-2 text-slate-700">#{{ .BotID }}</td>
-          <td class="px-3 py-2 font-mono text-xs text-slate-700">{{ .ChatID }}</td>
-          <td class="px-3 py-2 text-slate-600">{{ .Platform }}</td>
-          <td class="px-3 py-2 font-mono text-xs text-slate-500">{{ .LastSeenAt }}</td>
-          <td class="px-3 py-2 text-right">
-            <form method="POST" action="/ui/subscribers/{{ .ID }}/delete" class="inline" onsubmit="return confirm('确认解除订阅 ?');">
-              <input type="hidden" name="csrf" value="{{ $.CSRF }}">
-              <button type="submit" class="text-xs text-red-600 hover:text-red-800">解除</button>
-            </form>
-          </td>
-        </tr>
-        {{ end }}
-        {{ if not .Subscribers }}<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400 text-sm">尚无订阅者</td></tr>{{ end }}
-      </tbody>
-    </table>
-  </div>
+<div class="space-y-6">
+  <header>
+    <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-600">运行</p>
+    <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">订阅者</h1>
+    <p class="mt-1 text-sm text-slate-500">每次有用户在 Telegram 触发命令时自动记录；共 {{ len .Subscribers }} 条。</p>
+  </header>
+
+  <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50/80 sticky top-0 backdrop-blur dark:bg-slate-900/80">
+          <tr class="text-left">
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-12">#</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">命令</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Bot</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Chat ID</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">平台</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">最后活跃</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider text-right">操作</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ range .Subscribers }}
+          <tr class="hover:bg-slate-50/70 transition-colors dark:hover:bg-slate-800/40">
+            <td class="px-5 py-3 font-mono text-[12px] text-slate-400">#{{ .ID }}</td>
+            <td class="px-5 py-3 text-slate-700 dark:text-slate-300">#{{ .CommandID }}</td>
+            <td class="px-5 py-3 text-slate-700 dark:text-slate-300">#{{ .BotID }}</td>
+            <td class="px-5 py-3 font-mono text-[12px] text-slate-700 dark:text-slate-300">{{ .ChatID }}</td>
+            <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700">{{ .Platform }}</span></td>
+            <td class="px-5 py-3 font-mono text-[12px] text-slate-500">{{ .LastSeenAt }}</td>
+            <td class="px-5 py-3 text-right">
+              <form method="POST" action="/ui/subscribers/{{ .ID }}/delete" class="inline" onsubmit="return confirm('确认解除订阅 ?');">
+                <input type="hidden" name="csrf" value="{{ $.CSRF }}">
+                <button type="submit" class="inline-flex items-center gap-1 text-[12.5px] text-rose-600 hover:text-rose-700 font-medium hover:bg-rose-50 px-2 py-1 rounded transition-colors">解除</button>
+              </form>
+            </td>
+          </tr>
+          {{ end }}
+          {{ if not .Subscribers }}<tr><td colspan="7" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无订阅者" "在 Telegram 里有用户给 bot 发送命令后，订阅者会自动记录到这里。" "/ui/commands" "前往配置命令") }}</td></tr>{{ end }}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
 {{ template "layout-close" . }}{{ end }}

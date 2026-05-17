@@ -1,71 +1,86 @@
 {{ define "bots-page" }}{{ template "layout-open" . }}
-<div class="bg-white rounded-lg shadow border border-slate-200 overflow-hidden mb-6">
-  <div class="px-6 py-4 border-b border-slate-200">
-    <h2 class="text-base font-semibold text-slate-900">Bots</h2>
-    <p class="text-xs text-slate-500 mt-0.5">配置推送 Bot Token，供通道引用。Token 加密存储，UI 仅展示末 4 位。</p>
-  </div>
-  <div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-slate-200 text-sm">
-      <thead class="bg-slate-50">
-        <tr>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">ID</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">名称</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Platform</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">Token</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">描述</th>
-          <th class="px-4 py-2 text-right font-medium text-slate-500 uppercase tracking-wider text-xs">操作</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-100">
-        {{ $csrf := .CSRF }}
-        {{ range .Bots }}
-        <tr class="even:bg-slate-50/40">
-          <td class="px-4 py-2 text-slate-500 font-mono text-xs">{{ .ID }}</td>
-          <td class="px-4 py-2 text-slate-900 font-medium">{{ .Name }}</td>
-          <td class="px-4 py-2"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">{{ .Platform }}</span></td>
-          <td class="px-4 py-2 text-slate-600 font-mono text-xs">***{{ .BotTokenLast4 }}</td>
-          <td class="px-4 py-2 text-slate-600">{{ .Description }}</td>
-          <td class="px-4 py-2 text-right">
-            <form method="POST" action="/ui/bots/{{ .ID }}/delete" onsubmit="return confirm('确认删除？此操作不可撤销。');" class="inline">
-              <input type="hidden" name="csrf" value="{{ $csrf }}">
-              <button class="text-sm text-red-600 hover:text-red-700 font-medium">删除</button>
-            </form>
-          </td>
-        </tr>
-        {{ end }}
-        {{ if not .Bots }}<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400 text-sm">尚无 Bot，下方表单创建第一个</td></tr>{{ end }}
-      </tbody>
-    </table>
-  </div>
-</div>
+<div class="space-y-6">
+  <header class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+    <div>
+      <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-600">接入</p>
+      <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">Bots</h1>
+      <p class="mt-1 text-sm text-slate-500">配置推送 Bot Token，供通道引用。Token 加密存储，UI 仅展示末 4 位。</p>
+    </div>
+    <a href="#new-bot" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
+      <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      新建 Bot
+    </a>
+  </header>
 
-<div class="bg-white rounded-lg shadow border border-slate-200 p-6">
-  <h2 class="text-base font-semibold text-slate-900 mb-4">新建 Bot</h2>
-  <form method="POST" action="/ui/bots" class="space-y-4 max-w-lg">
-    <input type="hidden" name="csrf" value="{{ .CSRF }}">
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">名称</label>
-      <input type="text" name="name" required maxlength="64" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+  <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50/80 sticky top-0 backdrop-blur dark:bg-slate-900/80">
+          <tr class="text-left">
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-16">ID</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">名称</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Platform</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Token</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">描述</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider text-right">操作</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ $csrf := .CSRF }}
+          {{ range .Bots }}
+          <tr class="hover:bg-slate-50/70 transition-colors dark:hover:bg-slate-800/40">
+            <td class="px-5 py-3 text-slate-400 font-mono text-[12px]">#{{ .ID }}</td>
+            <td class="px-5 py-3"><div class="flex items-center gap-2.5"><span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100"><svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="text-slate-900 font-semibold dark:text-white">{{ .Name }}</span></div></td>
+            <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700">{{ .Platform }}</span></td>
+            <td class="px-5 py-3 text-slate-600 font-mono text-[12px] dark:text-slate-300">•••{{ .BotTokenLast4 }}</td>
+            <td class="px-5 py-3 text-slate-500 max-w-xs truncate">{{ .Description }}</td>
+            <td class="px-5 py-3 text-right">
+              <form method="POST" action="/ui/bots/{{ .ID }}/delete" onsubmit="return confirm('确认删除？此操作不可撤销。');" class="inline">
+                <input type="hidden" name="csrf" value="{{ $csrf }}">
+                <button class="inline-flex items-center gap-1 text-[12.5px] text-rose-600 hover:text-rose-700 font-medium hover:bg-rose-50 px-2 py-1 rounded transition-colors">删除</button>
+              </form>
+            </td>
+          </tr>
+          {{ end }}
+          {{ if not .Bots }}<tr><td colspan="6" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无 Bot" "通过下方表单创建第一个推送 Bot。Token 会被加密保存。" "#new-bot" "立即创建") }}</td></tr>{{ end }}
+        </tbody>
+      </table>
     </div>
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">平台</label>
-      <select name="platform" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-        <option value="telegram" selected>Telegram</option>
-      </select>
-      <p class="text-xs text-slate-500 mt-1">目前仅支持 Telegram；其余平台 V4 后续。</p>
-    </div>
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">Bot Token</label>
-      <input type="text" name="bot_token" required placeholder="12345:AAEX..." class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-      <p class="text-xs text-slate-500 mt-1">向 @BotFather 创建后获得，格式 <code class="bg-slate-100 px-1 py-0.5 rounded">数字:字母</code>。</p>
-    </div>
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">描述</label>
-      <input type="text" name="description" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-    </div>
-    <div class="pt-2">
-      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm px-4 py-2 rounded-md transition-colors">创建 Bot</button>
-    </div>
-  </form>
+  </section>
+
+  <section id="new-bot" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+    <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+      <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">新建 Bot</h2>
+      <p class="mt-0.5 text-[12px] text-slate-500">向 @BotFather 创建后获得 Token，复制到下方即可。</p>
+    </header>
+    <form method="POST" action="/ui/bots" class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div class="psg-float-wrap sm:col-span-1">
+        <input type="text" id="bn" name="name" required maxlength="64" placeholder="staging-alerts" class="psg-float-input">
+        <label for="bn" class="psg-float-label">名称</label>
+      </div>
+      <div class="sm:col-span-1">
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">平台</label>
+        <select name="platform" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+          <option value="telegram" selected>Telegram</option>
+        </select>
+        <p class="mt-1.5 text-[11.5px] text-slate-500">目前仅支持 Telegram；其他平台 V4 后续。</p>
+      </div>
+      <div class="psg-float-wrap sm:col-span-2">
+        <input type="text" id="bt" name="bot_token" required placeholder="12345:AAEX..." class="psg-float-input font-mono">
+        <label for="bt" class="psg-float-label">Bot Token</label>
+        <p class="mt-1.5 text-[11.5px] text-slate-500">格式 <code class="px-1 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">数字:字母</code>。</p>
+      </div>
+      <div class="psg-float-wrap sm:col-span-2">
+        <input type="text" id="bd" name="description" placeholder="可选描述" class="psg-float-input">
+        <label for="bd" class="psg-float-label">描述（可选）</label>
+      </div>
+      <div class="sm:col-span-2 pt-2">
+        <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建 Bot
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+    </form>
+  </section>
 </div>
 {{ template "layout-close" . }}{{ end }}

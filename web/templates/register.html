@@ -1,25 +1,38 @@
 {{ define "register-page" }}{{ template "layout-open" . }}
-<div class="bg-white rounded-lg shadow-md border border-slate-200 p-8">
-  <h1 class="text-2xl font-semibold text-slate-900 mb-1">注册</h1>
-  <p class="text-sm text-slate-500 mb-6">使用邀请码加入 PulseGuard</p>
-  <form method="POST" action="/ui/register" class="space-y-4">
-    <input type="hidden" name="csrf" value="{{ .CSRF }}">
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">邮箱</label>
-      <input type="email" name="email" autofocus required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+<div class="bg-white rounded-2xl shadow-xl ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/10">
+  <div class="px-8 pt-8 pb-6">
+    <div class="flex items-center gap-3 mb-6">
+      <span class="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-sm shadow-emerald-500/30 ring-1 ring-emerald-400/30">
+        <svg viewBox="0 0 32 32" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h5l2-7 4 12 3-9 2 4h6"/></svg>
+      </span>
+      <div>
+        <h1 class="text-xl font-semibold text-slate-900 tracking-tight dark:text-white">创建账号</h1>
+        <p class="text-[12.5px] text-slate-500">使用邀请码加入 PulseGuard</p>
+      </div>
     </div>
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">密码（≥ 6 位）</label>
-      <input type="password" name="password" minlength="6" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-    </div>
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">邀请码</label>
-      <input type="text" name="invite_code" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-    </div>
-    <div class="flex items-center justify-between pt-2">
-      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm px-4 py-2 rounded-md transition-colors">注册</button>
-      <a href="/ui/login" class="text-sm text-slate-500 hover:text-slate-700">已有账号？登录</a>
-    </div>
-  </form>
+
+    <form method="POST" action="/ui/register" class="space-y-4">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div class="psg-float-wrap">
+        <input type="email" id="rg-email" name="email" autofocus required placeholder="you@team.com" class="psg-float-input" autocomplete="email">
+        <label for="rg-email" class="psg-float-label">邮箱</label>
+      </div>
+      <div class="psg-float-wrap">
+        <input type="password" id="rg-pwd" name="password" minlength="6" required placeholder="password" class="psg-float-input" autocomplete="new-password">
+        <label for="rg-pwd" class="psg-float-label">密码（≥ 6 位）</label>
+      </div>
+      <div class="psg-float-wrap">
+        <input type="text" id="rg-inv" name="invite_code" required placeholder="INVITE-CODE" class="psg-float-input font-mono">
+        <label for="rg-inv" class="psg-float-label">邀请码</label>
+      </div>
+      <button type="submit" class="w-full inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">
+        创建账号
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </button>
+    </form>
+  </div>
+  <div class="px-8 py-4 bg-slate-50 border-t border-slate-100 text-center text-[12.5px] text-slate-500 dark:bg-slate-900/60 dark:border-slate-800">
+    已有账号？<a href="/ui/login" class="font-semibold text-emerald-600 hover:text-emerald-700">直接登录</a>
+  </div>
 </div>
 {{ template "layout-close" . }}{{ end }}
