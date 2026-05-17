@@ -414,6 +414,16 @@ func (l *Listener) handle(ctx context.Context, u update) {
 	case "/start", "/chatid":
 		l.replyChatID(ctx, msg.Chat.ID)
 		return
+	case "/commands":
+		l.handleListCommands(ctx, msg.Chat.ID)
+		return
+	case "/unsubscribe":
+		var arg string
+		if len(tokens) > 1 {
+			arg = tokens[1]
+		}
+		l.handleUnsubscribe(ctx, msg.Chat.ID, arg)
+		return
 	}
 
 	// Anything else starting with "/" is a candidate for the
@@ -497,6 +507,89 @@ var (
 // running even if a particular reply round-trip fails.
 func (l *Listener) replyChatID(ctx context.Context, chatID int64) {
 	l.replyText(ctx, chatID, fmt.Sprintf(replyTemplate, strconv.FormatInt(chatID, 10)))
+}
+
+// handleListCommands replies with a human-readable list of every
+// enabled custom command the catalog exposes for this bot's tenant.
+// Used when the user types /commands. When the catalog is not wired
+// (legacy MVP harness) the listener stays silent — the user typed an
+// unknown slash command and we route it through the normal "unknown"
+// path by returning early so the dispatcher branch still runs. In the
+// wired path we own the response and never fall through.
+func (l *Listener) handleListCommands(ctx context.Context, chatID int64) {
+	if l.catalog == nil {
+		// No catalog wired — degrade to silence (mirrors the legacy
+		// behaviour for unknown slash commands without a dispatcher).
+		l.logger.Info("telegram: /commands received but no catalog wired",
+			"bot_id", l.botID, "tenant_id", l.tenantID)
+		return
+	}
+	listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmds, err := l.catalog.ListByBot(listCtx, l.dbBotID)
+	if err != nil {
+		l.logger.Warn("telegram: /commands catalog failed",
+			"bot_id", l.botID, "tenant_id", l.tenantID, "err", err.Error())
+		l.replyText(ctx, chatID, "查询命令列表失败")
+		return
+	}
+	if len(cmds) == 0 {
+		l.replyText(ctx, chatID, "暂无可用命令")
+		return
+	}
+	var b strings.Builder
+	b.WriteString("可用命令：\n")
+	for _, c := range cmds {
+		name := "/" + strings.TrimPrefix(strings.TrimSpace(c.Name), "/")
+		if name == "/" {
+			continue
+		}
+		b.WriteString(name)
+		desc := strings.TrimSpace(c.Description)
+		if desc != "" {
+			b.WriteString(" — ")
+			b.WriteString(desc)
+		}
+		b.WriteByte('\n')
+	}
+	l.replyText(ctx, chatID, strings.TrimRight(b.String(), "\n"))
+}
+
+// handleUnsubscribe processes "/unsubscribe [name]". With no argument
+// the listener cannot guess which command to drop — we reply with the
+// usage hint. With an argument we ask the remover to delete the
+// (bot, chat, name) row; ErrNotFound surfaces as "未订阅" so the user
+// learns nothing about other tenants' commands.
+//
+// chatID is the int64 from the Telegram payload, but the subscriber
+// row stores it as a string (see SubscriberRepo.Upsert) so we format
+// it explicitly here.
+func (l *Listener) handleUnsubscribe(ctx context.Context, chatID int64, name string) {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if name == "" {
+		l.replyText(ctx, chatID, "用法：/unsubscribe <命令名>。\n输入 /commands 查看可用命令。")
+		return
+	}
+	if l.remover == nil {
+		l.logger.Info("telegram: /unsubscribe received but remover not wired",
+			"bot_id", l.botID, "tenant_id", l.tenantID, "name", name)
+		return
+	}
+	delCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	chatStr := strconv.FormatInt(chatID, 10)
+	err := l.remover.DeleteByChatAndCommand(delCtx, l.dbBotID, chatStr, name)
+	switch {
+	case err == nil:
+		l.replyText(ctx, chatID, "已取消订阅 /"+name)
+	case errors.Is(err, domain.ErrNotFound):
+		l.replyText(ctx, chatID, "未订阅 /"+name)
+	default:
+		l.logger.Warn("telegram: /unsubscribe failed",
+			"bot_id", l.botID, "tenant_id", l.tenantID,
+			"name", name, "chat_id", chatID, "err", err.Error())
+		l.replyText(ctx, chatID, "取消订阅失败")
+	}
 }
 
 // replyText is the underlying sendMessage helper. Errors are logged

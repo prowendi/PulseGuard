@@ -224,10 +224,12 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	dispatcher := cmdrun.New(commands, scriptExec, subscribers, logger)
 
 	// CommandCatalog adapter: the listener consults this on startup to
-	// publish setMyCommands. Domain→telegram projection is intentionally
+	// publish setMyCommands and to back /commands. SubscriberRemover
+	// powers /unsubscribe. Domain→telegram projections are intentionally
 	// narrow so the listener package never imports domain types beyond
 	// what it owns.
 	catalog := commandCatalogAdapter{commands: commands}
+	remover := subscriberRemoverAdapter{subscribers: subscribers}
 
 	listenerFactories := ov.BotListenerFactories
 	if len(listenerFactories) == 0 {
@@ -242,6 +244,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 				Logger:     logger,
 				Dispatcher: dispatcher,
 				Catalog:    catalog,
+				Remover:    remover,
 			}),
 		}
 	}

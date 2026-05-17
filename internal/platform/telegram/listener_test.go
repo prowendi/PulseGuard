@@ -623,3 +623,207 @@ func TestListener_SetMyCommandsSkippedWhenNoCatalog(t *testing.T) {
 		t.Fatalf("setMyCommands called %d times without a catalog, want 0", got)
 	}
 }
+
+// fakeRemover is a scriptable telegram.SubscriberRemover used by the
+// /unsubscribe tests. notFound[name]=true makes DeleteByChatAndCommand
+// return domain.ErrNotFound for that command name; otherwise the call
+// is recorded and returns nil.
+type fakeRemover struct {
+	mu       sync.Mutex
+	notFound map[string]bool
+	calls    []removeCall
+}
+
+type removeCall struct {
+	BotID   int64
+	ChatID  string
+	Command string
+}
+
+func newFakeRemover() *fakeRemover {
+	return &fakeRemover{notFound: map[string]bool{}}
+}
+
+func (r *fakeRemover) DeleteByChatAndCommand(_ context.Context, botID int64, chatID, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, removeCall{BotID: botID, ChatID: chatID, Command: name})
+	if r.notFound[name] {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (r *fakeRemover) Calls() []removeCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]removeCall, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
+
+func TestListener_CommandsBuiltinListsCatalog(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":700},"text":"/commands"}
+	}]}`)
+
+	cat := &fakeCatalog{rows: []CommandSummary{
+		{Name: "/echo", Description: "echo back args"},
+		{Name: "查询", Description: ""},
+	}}
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Catalog: cat,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	reply := srv.sentSnapshot()[0]
+	if reply.ChatID != 700 {
+		t.Fatalf("reply chat_id = %v, want 700", reply.ChatID)
+	}
+	for _, frag := range []string{"可用命令", "/echo", "echo back args", "/查询"} {
+		if !strings.Contains(reply.Text, frag) {
+			t.Fatalf("/commands reply missing %q: %q", frag, reply.Text)
+		}
+	}
+}
+
+func TestListener_CommandsBuiltinEmptyCatalog(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":701},"text":"/commands"}
+	}]}`)
+
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Catalog: &fakeCatalog{rows: nil},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "暂无") {
+		t.Fatalf("expected empty-catalog hint, got %q", got)
+	}
+}
+
+func TestListener_UnsubscribeBuiltinHappyPath(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":800},"text":"/unsubscribe echo"}
+	}]}`)
+
+	rem := newFakeRemover()
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Remover: rem,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(rem.Calls()) >= 1 })
+	call := rem.Calls()[0]
+	// BotID is the DB bot.ID (42 in botFixture), not the Telegram
+	// token prefix 111111. ChatID is stringified.
+	if call.BotID != 42 {
+		t.Fatalf("BotID = %d, want 42 (DB bot.ID)", call.BotID)
+	}
+	if call.ChatID != "800" {
+		t.Fatalf("ChatID = %q, want \"800\"", call.ChatID)
+	}
+	if call.Command != "echo" {
+		t.Fatalf("Command = %q, want echo", call.Command)
+	}
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "已取消订阅") {
+		t.Fatalf("expected confirmation, got %q", got)
+	}
+}
+
+func TestListener_UnsubscribeBuiltinNotFound(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":801},"text":"/unsubscribe ghost"}
+	}]}`)
+
+	rem := newFakeRemover()
+	rem.notFound["ghost"] = true
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Remover: rem,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "未订阅") {
+		t.Fatalf("expected '未订阅' reply, got %q", got)
+	}
+}
+
+func TestListener_UnsubscribeBuiltinUsageHint(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":802},"text":"/unsubscribe"}
+	}]}`)
+
+	rem := newFakeRemover()
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Remover: rem,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "用法") {
+		t.Fatalf("expected usage hint, got %q", got)
+	}
+	// Remover must NOT have been called with an empty name.
+	if got := len(rem.Calls()); got != 0 {
+		t.Fatalf("remover called %d times for arg-less /unsubscribe, want 0", got)
+	}
+}

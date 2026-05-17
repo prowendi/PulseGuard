@@ -162,4 +162,10 @@ type SubscriberRepo interface {
 	ListByCommand(ctx context.Context, tenantID, commandID int64) ([]*Subscriber, error)
 	ListByTenant(ctx context.Context, tenantID int64) ([]*Subscriber, error)
 	Delete(ctx context.Context, tenantID, id int64) error
+	// DeleteByChatAndCommand removes the subscription row the listener
+	// upserted when a chat first invoked a command. Powers the
+	// /unsubscribe built-in; matches both "/name" and "name" shapes.
+	// botID is the PulseGuard DB primary key (bots.id), same as
+	// CommandRepo.GetByBotAndName / ListByBot.
+	DeleteByChatAndCommand(ctx context.Context, botID int64, chatID, commandName string) error
 }

@@ -38,5 +38,23 @@ func (a commandCatalogAdapter) ListByBot(ctx context.Context, botID int64) ([]te
 	return out, nil
 }
 
-// Ensure compile-time conformance.
-var _ telegram.CommandCatalog = commandCatalogAdapter{}
+// subscriberRemoverAdapter projects domain.SubscriberRepo into the
+// narrow telegram.SubscriberRemover interface the listener consumes.
+// Same separation-of-concerns rationale as commandCatalogAdapter.
+type subscriberRemoverAdapter struct {
+	subscribers domain.SubscriberRepo
+}
+
+// DeleteByChatAndCommand implements telegram.SubscriberRemover by
+// forwarding to the underlying repo. The repo enforces tenant
+// scoping via the bots JOIN, so this layer is a pure pass-through.
+func (a subscriberRemoverAdapter) DeleteByChatAndCommand(ctx context.Context, botID int64, chatID, commandName string) error {
+	return a.subscribers.DeleteByChatAndCommand(ctx, botID, chatID, commandName)
+}
+
+// Compile-time conformance.
+var (
+	_ telegram.CommandCatalog    = commandCatalogAdapter{}
+	_ telegram.SubscriberRemover = subscriberRemoverAdapter{}
+)
+

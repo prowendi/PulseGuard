@@ -395,3 +395,83 @@ func TestSubscriberRepo_CommandDeleteCascades(t *testing.T) {
 		t.Fatalf("subscribers should be cascade-deleted, got %d rows", len(rows))
 	}
 }
+
+// ─── DeleteByChatAndCommand (V6-4 /unsubscribe path) ──────────────
+
+func TestSubscriberRepo_DeleteByChatAndCommandSlashName(t *testing.T) {
+	f, cmdRepo := newCommandFixture(t)
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, "/echo")
+	if err := cmdRepo.Insert(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	subRepo := NewSubscriberRepo(f.db, f.clk)
+	if err := subRepo.Upsert(context.Background(), &domain.Subscriber{
+		TenantID: f.tenant.ID, CommandID: c.ID, BotID: bot.ID, ChatID: "9001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Caller passes the bare name (no leading slash) — must match
+	// against the slash-shaped catalog entry.
+	if err := subRepo.DeleteByChatAndCommand(context.Background(), bot.ID, "9001", "echo"); err != nil {
+		t.Fatalf("DeleteByChatAndCommand: %v", err)
+	}
+	rows, _ := subRepo.ListByTenant(context.Background(), f.tenant.ID)
+	if len(rows) != 0 {
+		t.Fatalf("subscriber not deleted: %d rows", len(rows))
+	}
+}
+
+func TestSubscriberRepo_DeleteByChatAndCommandBareName(t *testing.T) {
+	f, cmdRepo := newCommandFixture(t)
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, "查询") // stored without leading slash
+	if err := cmdRepo.Insert(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	subRepo := NewSubscriberRepo(f.db, f.clk)
+	if err := subRepo.Upsert(context.Background(), &domain.Subscriber{
+		TenantID: f.tenant.ID, CommandID: c.ID, BotID: bot.ID, ChatID: "9002",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Caller passes the slash-prefixed name — must still find the
+	// bare-shaped catalog entry.
+	if err := subRepo.DeleteByChatAndCommand(context.Background(), bot.ID, "9002", "/查询"); err != nil {
+		t.Fatalf("DeleteByChatAndCommand: %v", err)
+	}
+}
+
+func TestSubscriberRepo_DeleteByChatAndCommandNotFound(t *testing.T) {
+	f, _ := newCommandFixture(t)
+	bot := f.makeBot(t, "alpha", "1:secret")
+	subRepo := NewSubscriberRepo(f.db, f.clk)
+	err := subRepo.DeleteByChatAndCommand(context.Background(), bot.ID, "9003", "ghost")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSubscriberRepo_DeleteByChatAndCommandCrossBotIgnored(t *testing.T) {
+	f, cmdRepo := newCommandFixture(t)
+	bot := f.makeBot(t, "alpha", "1:secret")
+	c := makeCommand(f.tenant.ID, "/echo")
+	if err := cmdRepo.Insert(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	subRepo := NewSubscriberRepo(f.db, f.clk)
+	if err := subRepo.Upsert(context.Background(), &domain.Subscriber{
+		TenantID: f.tenant.ID, CommandID: c.ID, BotID: bot.ID, ChatID: "9004",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Use a bot id that does NOT exist — the JOIN drops the
+	// subscriber out of scope so the delete must miss.
+	if err := subRepo.DeleteByChatAndCommand(context.Background(), 99999, "9004", "echo"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cross-bot delete err = %v, want ErrNotFound", err)
+	}
+	rows, _ := subRepo.ListByTenant(context.Background(), f.tenant.ID)
+	if len(rows) != 1 {
+		t.Fatalf("subscriber should still exist, got %d rows", len(rows))
+	}
+}

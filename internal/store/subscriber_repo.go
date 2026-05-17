@@ -107,6 +107,52 @@ func (r *SubscriberRepo) Delete(ctx context.Context, tenantID, id int64) error {
 	return nil
 }
 
+// DeleteByChatAndCommand removes the subscription a chat has against
+// a (bot, command-name) tuple — the row Upsert creates the first time
+// a chat invokes a command. Powers the listener's built-in
+// /unsubscribe so users can opt out without involving the operator.
+//
+// The command name is matched against the commands.name column AND
+// also against "/"+name because operators define commands in either
+// shape; both join the same row by (tenant via bots) so the matching
+// is symmetric. Returns ErrNotFound when no row matches (the listener
+// turns that into a friendly "未订阅" reply).
+//
+// botID is the PulseGuard DB primary key (bots.id), same convention
+// as CommandRepo.GetByBotAndName / ListByBot.
+func (r *SubscriberRepo) DeleteByChatAndCommand(ctx context.Context, botID int64, chatID, commandName string) error {
+	commandName = strings.TrimSpace(commandName)
+	if commandName == "" {
+		return fmt.Errorf("%w: command name empty", domain.ErrValidation)
+	}
+	if strings.TrimSpace(chatID) == "" {
+		return fmt.Errorf("%w: chat id empty", domain.ErrValidation)
+	}
+	slashName := "/" + strings.TrimPrefix(commandName, "/")
+	bareName := strings.TrimPrefix(commandName, "/")
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM subscribers
+		 WHERE bot_id = ?
+		   AND chat_id = ?
+		   AND command_id IN (
+		     SELECT c.id FROM commands c
+		      JOIN bots b ON b.tenant_id = c.tenant_id
+		      WHERE b.id = ?
+		        AND (c.name = ? OR c.name = ?)
+		   )`, botID, chatID, botID, slashName, bareName)
+	if err != nil {
+		return fmt.Errorf("delete subscriber by chat+command: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func collectSubscribers(rows *sql.Rows) ([]*domain.Subscriber, error) {
 	var out []*domain.Subscriber
 	for rows.Next() {
