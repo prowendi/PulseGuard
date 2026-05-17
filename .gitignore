@@ -1,6 +1,7 @@
 /pulseguard
 /pulseguard.exe
 /pulseguard-bin
+/bin/
 /scripts/smoke/smoke
 /scripts/smoke/smoke.exe
 /smoke
@@ -15,3 +16,4 @@
 /dist/
 .env
 config.yaml
+psg.log
