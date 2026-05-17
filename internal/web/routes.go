@@ -18,11 +18,16 @@ func mountPushAPI(r chi.Router, deps Deps) {
 
 // mountAuthedAPI installs every session-gated /api/v1/* endpoint.
 // CSRF + auth middleware applied here once for the whole subtree.
+//
+// Ordering invariant: RequireAuth MUST run before CSRFCheck so the
+// session id is attached to ctx; CSRFCheck rebuilds the expected HMAC
+// from that session id to reject cookie-injection attacks
+// (round2-security-report S2-M3).
 func mountAuthedAPI(r chi.Router, deps Deps) {
 	r.Group(func(sec chi.Router) {
 		sec.Use(wmw.RequireAuth(deps.Auth))
 		sec.Use(EnsureCSRFCookie(deps))
-		sec.Use(wmw.CSRFCheck())
+		sec.Use(wmw.CSRFCheck(deps.csrfSecret()))
 		sec.Get("/me", apiMe(deps))
 		sec.Post("/auth/logout", apiLogout(deps))
 		installBotsAPIRoutes(sec, deps)
