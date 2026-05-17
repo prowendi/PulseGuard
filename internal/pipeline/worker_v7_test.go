@@ -133,3 +133,134 @@ func TestExtractButtons_Malformed(t *testing.T) {
 
 // avoid unused-import in case future imports are pruned.
 var _ time.Duration
+
+// =====================================================================
+// V7-2 editMessageText state machine
+// =====================================================================
+
+// TestWorkerV72FirstPushSendsAndPersistsThread proves the V7-2
+// happy-path bootstrapping: a payload carrying a fresh `_fingerprint`
+// must go through Send (NOT Edit) on the first attempt and the
+// resulting tg_message_id must be stamped into message_threads so the
+// next push of the same fingerprint can collapse.
+func TestWorkerV72FirstPushSendsAndPersistsThread(t *testing.T) {
+	sender := &fakeSender{resp: func(int) (int64, error) { return 555, nil }}
+	f := newWorkerFixture(t, sender, true)
+	_ = f.enqueueWithPayload(t, `{"name":"world","_fingerprint":"db01-cpu"}`)
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("expected one send (bootstrapping), got %d", sender.calls)
+	}
+	if sender.editCalls != 0 {
+		t.Fatalf("expected zero edits on bootstrap, got %d", sender.editCalls)
+	}
+	if f.threads.count() != 1 {
+		t.Fatalf("expected one message_thread row, got %d", f.threads.count())
+	}
+	row, err := f.threads.GetByFingerprint(context.Background(), 1, "db01-cpu")
+	if err != nil {
+		t.Fatalf("GetByFingerprint: %v", err)
+	}
+	if row.TGMessageID != 555 {
+		t.Fatalf("thread tg_message_id = %d, want 555", row.TGMessageID)
+	}
+	if row.ChatID != "12345" {
+		t.Fatalf("thread chat_id = %q, want 12345", row.ChatID)
+	}
+}
+
+// TestWorkerV72SecondPushEditsExistingThread is the load-bearing test:
+// after a thread row exists, a second push of the same `_fingerprint`
+// MUST hit EditMessage instead of Send. This is the whole point of
+// V7-2 — collapse the alert storm into one updating Telegram message.
+func TestWorkerV72SecondPushEditsExistingThread(t *testing.T) {
+	sender := &fakeSender{resp: func(int) (int64, error) { return 777, nil }}
+	f := newWorkerFixture(t, sender, true)
+
+	// First push: bootstraps the thread.
+	_ = f.enqueueWithPayload(t, `{"name":"world","_fingerprint":"db01-cpu"}`)
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick1: %v", err)
+	}
+	if sender.calls != 1 || sender.editCalls != 0 {
+		t.Fatalf("after first push: calls=%d edits=%d (want 1/0)", sender.calls, sender.editCalls)
+	}
+
+	// Second push: same fingerprint → must edit.
+	_ = f.enqueueWithPayload(t, `{"name":"again","_fingerprint":"db01-cpu"}`)
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick2: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("expected NO new send after edit collapse, got %d sends", sender.calls)
+	}
+	if sender.editCalls != 1 {
+		t.Fatalf("expected one edit, got %d", sender.editCalls)
+	}
+	if sender.lastEditID != 777 {
+		t.Fatalf("edit targeted msg_id=%d, want 777 (original send id)", sender.lastEditID)
+	}
+	// The rendered text must reflect the new payload (template is
+	// "Hello {{ .name }}" so the second push edits to "Hello again").
+	if sender.lastEditText != "Hello again" {
+		t.Fatalf("edit text = %q, want %q", sender.lastEditText, "Hello again")
+	}
+
+	// And exactly one thread row stays in place (UNIQUE collapses).
+	if f.threads.count() != 1 {
+		t.Fatalf("expected one thread row after edit, got %d", f.threads.count())
+	}
+}
+
+// TestWorkerV72NoFingerprintKeepsLegacySend is the regression net for
+// the "do not break the pre-V7 path" invariant. Payloads that omit
+// `_fingerprint` must NEVER touch MessageThreads — no lookup, no
+// upsert. This guard is what the spec means by "behaviour unchanged
+// for callers that have not opted in".
+func TestWorkerV72NoFingerprintKeepsLegacySend(t *testing.T) {
+	sender := &fakeSender{resp: func(int) (int64, error) { return 42, nil }}
+	f := newWorkerFixture(t, sender, true)
+	_ = f.enqueueWithPayload(t, `{"name":"world"}`) // no fingerprint
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("send count = %d, want 1", sender.calls)
+	}
+	if sender.editCalls != 0 {
+		t.Fatalf("edit count = %d, want 0 (no fingerprint = no edit)", sender.editCalls)
+	}
+	if f.threads.count() != 0 {
+		t.Fatalf("thread rows = %d, want 0 (no fingerprint = no thread)", f.threads.count())
+	}
+}
+
+// TestExtractFingerprint covers the helper's allowable surface so a
+// future refactor cannot silently change which payloads opt into the
+// V7-2 state machine.
+func TestExtractFingerprint(t *testing.T) {
+	cases := map[string]struct {
+		raw  string
+		want string
+	}{
+		"plain":               {`{"_fingerprint":"db01-cpu"}`, "db01-cpu"},
+		"trimmed":             {`{"_fingerprint":"  db01-cpu  "}`, "db01-cpu"},
+		"empty string":        {`{"_fingerprint":""}`, ""},
+		"missing":             {`{"name":"x"}`, ""},
+		"non-string":          {`{"_fingerprint":42}`, ""},
+		"null":                {`{"_fingerprint":null}`, ""},
+		"object":              {`{"_fingerprint":{"k":"v"}}`, ""},
+		"with other keys":     {`{"name":"x","_fingerprint":"k"}`, "k"},
+		"whitespace collapse": {`{"_fingerprint":"   "}`, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := extractFingerprint(decodePayload(tc.raw))
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

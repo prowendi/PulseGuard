@@ -18,25 +18,26 @@ import (
 // repo is an interface; tests can substitute fakes by populating the
 // struct directly.
 type Deps struct {
-	Cfg         *config.Config
-	Logger      *slog.Logger
-	Tenants     domain.TenantRepo
-	Invites     domain.InviteRepo
-	Sessions    domain.SessionRepo
-	Bots        domain.BotRepo
-	Templates   domain.TemplateRepo
-	Channels    domain.ChannelRepo
-	Outbox      domain.OutboxRepo
-	Logs        domain.LogRepo
-	DLQ         domain.DeadLetterRepo
-	RL          domain.RateLimiter
-	Commands    domain.CommandRepo
-	Subscribers domain.SubscriberRepo
-	Cipher      *store.Cipher
-	Auth        *auth.Service
-	Ingest      *pipeline.Ingestor
-	TG          domain.Sender
-	Clock       domain.Clock
+	Cfg            *config.Config
+	Logger         *slog.Logger
+	Tenants        domain.TenantRepo
+	Invites        domain.InviteRepo
+	Sessions       domain.SessionRepo
+	Bots           domain.BotRepo
+	Templates      domain.TemplateRepo
+	Channels       domain.ChannelRepo
+	Outbox         domain.OutboxRepo
+	Logs           domain.LogRepo
+	DLQ            domain.DeadLetterRepo
+	RL             domain.RateLimiter
+	Commands       domain.CommandRepo
+	Subscribers    domain.SubscriberRepo
+	MessageThreads domain.MessageThreadRepo
+	Cipher         *store.Cipher
+	Auth           *auth.Service
+	Ingest         *pipeline.Ingestor
+	TG             domain.Sender
+	Clock          domain.Clock
 
 	// ScriptExec is the Starlark executor used by the commands "test
 	// run" endpoint. nil-safe: handlers fall back to a stub when unset,

@@ -134,6 +134,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	commands := store.NewCommandRepo(db, clock)
 	subscribers := store.NewSubscriberRepo(db, clock)
 	alertAcks := store.NewAlertAckRepo(db, clock)
+	messageThreads := store.NewMessageThreadRepo(db, clock)
 
 	// ── 4. Sender (real TG client wrapped in the V7-1/V7-2 adapter
 	// that exposes SendWithOpts + EditMessage on top of the legacy
@@ -173,16 +174,17 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	workers := make([]*pipeline.Worker, 0, workerCount)
 	for i := 0; i < workerCount; i++ {
 		w := pipeline.New(pipeline.WorkerDeps{
-			Outbox:    outbox,
-			Channels:  channels,
-			Bots:      bots,
-			Templates: templates,
-			Logs:      logs,
-			DLQ:       dlq,
-			RL:        rl,
-			Sender:    sender,
-			Clock:     clock,
-			Logger:    logger,
+			Outbox:         outbox,
+			Channels:       channels,
+			Bots:           bots,
+			Templates:      templates,
+			Logs:           logs,
+			DLQ:            dlq,
+			RL:             rl,
+			Sender:         sender,
+			Clock:          clock,
+			MessageThreads: messageThreads,
+			Logger:         logger,
 		}, pipeline.WorkerCfg{
 			WorkerID:     fmt.Sprintf("w-%d-%d", pid, i),
 			PollInterval: cfg.Worker.PollInterval.Std(),
@@ -328,27 +330,28 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 
 	// ── 9. HTTP handler.
 	handler := web.NewServer(web.Deps{
-		Cfg:          cfg,
-		Logger:       logger,
-		Tenants:      tenants,
-		Invites:      invites,
-		Sessions:     sessions,
-		Bots:         bots,
-		Templates:    templates,
-		Channels:     channels,
-		Outbox:       outbox,
-		Logs:         logs,
-		DLQ:          dlq,
-		RL:           rl,
-		Commands:     commands,
-		Subscribers:  subscribers,
-		ScriptExec:   scriptExec,
-		Cipher:       cipher,
-		Auth:         authSvc,
-		Ingest:       ingest,
-		TG:           sender,
-		Clock:        clock,
-		BotListeners: listenerMgr,
+		Cfg:            cfg,
+		Logger:         logger,
+		Tenants:        tenants,
+		Invites:        invites,
+		Sessions:       sessions,
+		Bots:           bots,
+		Templates:      templates,
+		Channels:       channels,
+		Outbox:         outbox,
+		Logs:           logs,
+		DLQ:            dlq,
+		RL:             rl,
+		Commands:       commands,
+		Subscribers:    subscribers,
+		MessageThreads: messageThreads,
+		ScriptExec:     scriptExec,
+		Cipher:         cipher,
+		Auth:           authSvc,
+		Ingest:         ingest,
+		TG:             sender,
+		Clock:          clock,
+		BotListeners:   listenerMgr,
 	})
 
 	// ── 10. Start HTTP listener on configured addr (":0" auto-port).

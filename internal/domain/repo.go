@@ -209,3 +209,18 @@ type AlertAckRepo interface {
 	GetByFingerprint(ctx context.Context, tenantID int64, fingerprint string) (*AlertAck, error)
 	ListByTenant(ctx context.Context, tenantID int64) ([]*AlertAck, error)
 }
+
+// MessageThreadRepo persists the (channel, fingerprint) → live
+// Telegram message_id projection the V7-2 worker uses to collapse
+// repeat alerts via editMessageText instead of sending duplicates.
+//
+// Upsert is idempotent: when the (channel_id, fingerprint) row
+// already exists it stamps the row's tg_message_id + updated_at;
+// otherwise it inserts a fresh row. GetByFingerprint returns
+// ErrNotFound when nothing matches so the worker can branch on the
+// classical Go error idiom without inspecting nil pointers.
+type MessageThreadRepo interface {
+	Upsert(ctx context.Context, m *MessageThread) error
+	GetByFingerprint(ctx context.Context, channelID int64, fingerprint string) (*MessageThread, error)
+	DeleteByChannel(ctx context.Context, tenantID, channelID int64) error
+}

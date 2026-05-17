@@ -260,10 +260,96 @@ func (r *fakeRL) Allow(ctx context.Context, ch int64, rate int) (bool, error) {
 	return r.allow, nil
 }
 
+// fakeMessageThreadRepo is an in-memory domain.MessageThreadRepo used
+// by V7-2 worker tests. Threads are keyed by (channel_id, fingerprint)
+// to match the SQL UNIQUE. nil-safe for tests that pre-date V7-2: the
+// worker is wired with this fake on every fixture so the edit branch
+// is always reachable.
+type fakeMessageThreadRepo struct {
+	mu      sync.Mutex
+	threads map[string]*domain.MessageThread
+	seq     int64
+	// upsertErr / lookupErr, when non-nil, force the corresponding op
+	// to fail — used by tests that exercise the non-fatal fallback
+	// paths (lookup failure must NOT DLQ; upsert failure must NOT
+	// derail the send).
+	upsertErr error
+	lookupErr error
+}
+
+func newFakeMessageThreadRepo() *fakeMessageThreadRepo {
+	return &fakeMessageThreadRepo{threads: map[string]*domain.MessageThread{}}
+}
+
+func threadKey(channelID int64, fp string) string {
+	return strconvI(channelID) + "|" + fp
+}
+
+// strconvI is a tiny int64→string so the test file does not pull in
+// strconv (mirrors itoa below).
+func strconvI(v int64) string { return itoa(v) }
+
+func (r *fakeMessageThreadRepo) Upsert(ctx context.Context, m *domain.MessageThread) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.upsertErr != nil {
+		return r.upsertErr
+	}
+	k := threadKey(m.ChannelID, m.Fingerprint)
+	if existing, ok := r.threads[k]; ok {
+		existing.ChatID = m.ChatID
+		existing.TGMessageID = m.TGMessageID
+		m.ID = existing.ID
+		return nil
+	}
+	r.seq++
+	m.ID = r.seq
+	cp := *m
+	r.threads[k] = &cp
+	return nil
+}
+
+func (r *fakeMessageThreadRepo) GetByFingerprint(ctx context.Context, channelID int64, fp string) (*domain.MessageThread, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lookupErr != nil {
+		return nil, r.lookupErr
+	}
+	if m, ok := r.threads[threadKey(channelID, fp)]; ok {
+		cp := *m
+		return &cp, nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (r *fakeMessageThreadRepo) DeleteByChannel(ctx context.Context, tenantID, channelID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k, m := range r.threads {
+		if m.ChannelID == channelID && m.TenantID == tenantID {
+			delete(r.threads, k)
+		}
+	}
+	return nil
+}
+
+func (r *fakeMessageThreadRepo) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.threads)
+}
+
 type fakeSender struct {
 	mu    sync.Mutex
 	calls int
 	resp  func(call int) (int64, error)
+	// V7-2: edit tracking — every editFn lookup records the call so
+	// tests can assert which path the worker took. nil resp returns
+	// nil so the legacy "send-only" tests can ignore Edit entirely.
+	editCalls    int
+	lastEditID   int64
+	lastEditText string
+	editResp     func(call int) error
 }
 
 func (s *fakeSender) Send(ctx context.Context, botToken, chatID, parseMode, text string) (int64, error) {
@@ -274,21 +360,47 @@ func (s *fakeSender) Send(ctx context.Context, botToken, chatID, parseMode, text
 	return s.resp(c)
 }
 
+// SendWithOpts is needed so fakeSender satisfies domain.SenderWithOpts
+// — without it the V7-2 worker would never take the editMessageText
+// branch in tests because the type assertion would fall through. The
+// implementation delegates to Send so legacy tests that only set resp
+// continue to see exactly one send-per-call.
+func (s *fakeSender) SendWithOpts(ctx context.Context, botToken, chatID, parseMode, text string, _ domain.SendOptions) (int64, error) {
+	return s.Send(ctx, botToken, chatID, parseMode, text)
+}
+
+// EditMessage records the edit and returns whatever editResp dictates.
+// When editResp is nil the call succeeds — that's the friendly default
+// for happy-path tests; failure-path tests inject their own editResp.
+func (s *fakeSender) EditMessage(ctx context.Context, botToken, chatID string, messageID int64, parseMode, text string) error {
+	s.mu.Lock()
+	s.editCalls++
+	c := s.editCalls
+	s.lastEditID = messageID
+	s.lastEditText = text
+	s.mu.Unlock()
+	if s.editResp != nil {
+		return s.editResp(c)
+	}
+	return nil
+}
+
 // =====================================================================
 // Helpers
 // =====================================================================
 
 type workerFixture struct {
-	outbox *fakeOutbox
-	logs   *fakeLogRepo
-	dlq    *fakeDLQ
-	chans  *fakeChannelRepo
-	bots   *fakeBotRepo
-	tpls   *fakeTplRepo
-	rl     *fakeRL
-	clk    *domain.FakeClock
-	w      *Worker
-	logBuf *syncBuffer
+	outbox  *fakeOutbox
+	logs    *fakeLogRepo
+	dlq     *fakeDLQ
+	chans   *fakeChannelRepo
+	bots    *fakeBotRepo
+	tpls    *fakeTplRepo
+	rl      *fakeRL
+	threads *fakeMessageThreadRepo
+	clk     *domain.FakeClock
+	w       *Worker
+	logBuf  *syncBuffer
 }
 
 // syncBuffer is a goroutine-safe wrapper around bytes.Buffer so multiple
@@ -326,31 +438,34 @@ func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerF
 	}}
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	threads := newFakeMessageThreadRepo()
 	deps := WorkerDeps{
-		Outbox:    newFakeOutbox(),
-		Channels:  chans,
-		Bots:      bots,
-		Templates: tpls,
-		Logs:      &fakeLogRepo{},
-		DLQ:       &fakeDLQ{},
-		RL:        &fakeRL{allow: rlAllow},
-		Sender:    sender,
-		Clock:     clk,
-		Logger:    logger,
+		Outbox:         newFakeOutbox(),
+		Channels:       chans,
+		Bots:           bots,
+		Templates:      tpls,
+		Logs:           &fakeLogRepo{},
+		DLQ:            &fakeDLQ{},
+		RL:             &fakeRL{allow: rlAllow},
+		Sender:         sender,
+		Clock:          clk,
+		MessageThreads: threads,
+		Logger:         logger,
 	}
 	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
 	w := New(deps, cfg)
 	return &workerFixture{
-		outbox: deps.Outbox.(*fakeOutbox),
-		logs:   deps.Logs.(*fakeLogRepo),
-		dlq:    deps.DLQ.(*fakeDLQ),
-		chans:  chans,
-		bots:   bots,
-		tpls:   tpls,
-		rl:     deps.RL.(*fakeRL),
-		clk:    clk,
-		w:      w,
-		logBuf: logBuf,
+		outbox:  deps.Outbox.(*fakeOutbox),
+		logs:    deps.Logs.(*fakeLogRepo),
+		dlq:     deps.DLQ.(*fakeDLQ),
+		chans:   chans,
+		bots:    bots,
+		tpls:    tpls,
+		rl:      deps.RL.(*fakeRL),
+		threads: threads,
+		clk:     clk,
+		w:       w,
+		logBuf:  logBuf,
 	}
 }
 
@@ -729,31 +844,34 @@ func newMultiTemplateFixture(t *testing.T, sender domain.Sender) *workerFixture 
 	}}
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	threads := newFakeMessageThreadRepo()
 	deps := WorkerDeps{
-		Outbox:    newFakeOutbox(),
-		Channels:  chans,
-		Bots:      bots,
-		Templates: tpls,
-		Logs:      &fakeLogRepo{},
-		DLQ:       &fakeDLQ{},
-		RL:        &fakeRL{allow: true},
-		Sender:    sender,
-		Clock:     clk,
-		Logger:    logger,
+		Outbox:         newFakeOutbox(),
+		Channels:       chans,
+		Bots:           bots,
+		Templates:      tpls,
+		Logs:           &fakeLogRepo{},
+		DLQ:            &fakeDLQ{},
+		RL:             &fakeRL{allow: true},
+		Sender:         sender,
+		Clock:          clk,
+		MessageThreads: threads,
+		Logger:         logger,
 	}
 	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
 	w := New(deps, cfg)
 	return &workerFixture{
-		outbox: deps.Outbox.(*fakeOutbox),
-		logs:   deps.Logs.(*fakeLogRepo),
-		dlq:    deps.DLQ.(*fakeDLQ),
-		chans:  chans,
-		bots:   bots,
-		tpls:   tpls,
-		rl:     deps.RL.(*fakeRL),
-		clk:    clk,
-		w:      w,
-		logBuf: logBuf,
+		outbox:  deps.Outbox.(*fakeOutbox),
+		logs:    deps.Logs.(*fakeLogRepo),
+		dlq:     deps.DLQ.(*fakeDLQ),
+		chans:   chans,
+		bots:    bots,
+		tpls:    tpls,
+		rl:      deps.RL.(*fakeRL),
+		threads: threads,
+		clk:     clk,
+		w:       w,
+		logBuf:  logBuf,
 	}
 }
 
@@ -971,31 +1089,34 @@ func newConditionFixture(t *testing.T, sender domain.Sender) *workerFixture {
 	}}
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	threads := newFakeMessageThreadRepo()
 	deps := WorkerDeps{
-		Outbox:    newFakeOutbox(),
-		Channels:  chans,
-		Bots:      bots,
-		Templates: tpls,
-		Logs:      &fakeLogRepo{},
-		DLQ:       &fakeDLQ{},
-		RL:        &fakeRL{allow: true},
-		Sender:    sender,
-		Clock:     clk,
-		Logger:    logger,
+		Outbox:         newFakeOutbox(),
+		Channels:       chans,
+		Bots:           bots,
+		Templates:      tpls,
+		Logs:           &fakeLogRepo{},
+		DLQ:            &fakeDLQ{},
+		RL:             &fakeRL{allow: true},
+		Sender:         sender,
+		Clock:          clk,
+		MessageThreads: threads,
+		Logger:         logger,
 	}
 	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
 	w := New(deps, cfg)
 	return &workerFixture{
-		outbox: deps.Outbox.(*fakeOutbox),
-		logs:   deps.Logs.(*fakeLogRepo),
-		dlq:    deps.DLQ.(*fakeDLQ),
-		chans:  chans,
-		bots:   bots,
-		tpls:   tpls,
-		rl:     deps.RL.(*fakeRL),
-		clk:    clk,
-		w:      w,
-		logBuf: logBuf,
+		outbox:  deps.Outbox.(*fakeOutbox),
+		logs:    deps.Logs.(*fakeLogRepo),
+		dlq:     deps.DLQ.(*fakeDLQ),
+		chans:   chans,
+		bots:    bots,
+		tpls:    tpls,
+		rl:      deps.RL.(*fakeRL),
+		threads: threads,
+		clk:     clk,
+		w:       w,
+		logBuf:  logBuf,
 	}
 }
 

@@ -63,6 +63,7 @@ func TestMigrate_AllTablesPresent(t *testing.T) {
 		"dead_letters",
 		"dedup_keys",
 		"invite_codes",
+		"message_threads",
 		"push_logs",
 		"push_outbox",
 		"rate_buckets",

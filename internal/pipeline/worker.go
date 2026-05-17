@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/wendi/pulseguard/internal/condeval"
@@ -26,6 +27,12 @@ type WorkerDeps struct {
 	RL        domain.RateLimiter
 	Sender    domain.Sender
 	Clock     domain.Clock
+	// MessageThreads, when non-nil, drives the V7-2 editMessageText
+	// state machine: payloads carrying an `_fingerprint` consult the
+	// thread table on hot-path. nil-safe — when the dependency is
+	// absent the worker degrades to vanilla Send so legacy fixtures
+	// (and the simple unit tests that pre-date V7-2) keep working.
+	MessageThreads domain.MessageThreadRepo
 	// Logger receives structured records for every claim/sent/retry/dead
 	// branch. Nil is acceptable — a noop logger writing to io.Discard is
 	// substituted so call sites never need to nil-check.
@@ -204,28 +211,106 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	// Either path keeps the V7-1 change strictly additive for callers
 	// that have not opted in.
 	buttons := extractButtons(payload)
+
+	// V7-2: collapse repeat alerts that share an `_fingerprint`. The
+	// branch is opt-in by payload: callers that omit `_fingerprint`
+	// retain the pre-V7 single-shot Send behaviour exactly. When the
+	// fingerprint is present AND a message_threads row exists AND the
+	// Sender implements EditMessage we rewrite the live Telegram message
+	// in place. Everything else falls through to Send and (on success)
+	// stamps a fresh thread row so the next push edits this one.
+	fingerprint := extractFingerprint(payload)
+	if fingerprint != "" && w.deps.MessageThreads != nil {
+		if existing, lookupErr := w.deps.MessageThreads.GetByFingerprint(ctx, ch.ID, fingerprint); lookupErr == nil && existing != nil {
+			if sw, ok := w.deps.Sender.(domain.SenderWithOpts); ok {
+				if editErr := sw.EditMessage(ctx, bot.BotToken, ch.ChatID, existing.TGMessageID, parseMode, text); editErr == nil {
+					w.markEdited(ctx, item, text, existing)
+					return true, nil
+				} else {
+					// Edit failed — classify same as Send. The thread row
+					// stays in place; a successful subsequent send below
+					// will upsert it with the new tg_message_id so the next
+					// edit targets the right message.
+					return w.handleSendErr(ctx, item, text, editErr), nil
+				}
+			}
+			// Sender lacks EditMessage capability (legacy fake). Fall
+			// through to a normal send; the surrounding plumbing keeps
+			// the duplicate noise the operator was hoping to avoid, but
+			// the alert still lands.
+			w.deps.Logger.Info("pipeline.worker edit fallback (sender does not implement SenderWithOpts)",
+				"worker_id", w.cfg.WorkerID,
+				"outbox_id", item.ID,
+				"channel_id", item.ChannelID,
+				"fingerprint", fingerprint)
+		} else if lookupErr != nil && !errors.Is(lookupErr, domain.ErrNotFound) {
+			// A SQL-level lookup error is non-fatal: log and continue with
+			// a vanilla send so the alert still ships. Without this guard
+			// a transient SQLite hiccup would DLQ legitimate pushes.
+			w.deps.Logger.Warn("pipeline.worker message_thread lookup failed; falling back to send",
+				"worker_id", w.cfg.WorkerID,
+				"outbox_id", item.ID,
+				"channel_id", item.ChannelID,
+				"fingerprint", fingerprint,
+				"err", lookupErr.Error())
+		}
+	}
+
 	msgID, sendErr := w.dispatchSend(ctx, bot.BotToken, ch.ChatID, parseMode, text, buttons)
 	if sendErr == nil {
 		w.markSent(ctx, item, text, msgID)
+		// V7-2: stamp the message_threads row so the next push with the
+		// same fingerprint edits THIS message. Failures here are
+		// non-fatal — the send already happened; worst case the next
+		// payload sends a fresh message rather than collapsing.
+		if fingerprint != "" && w.deps.MessageThreads != nil {
+			thread := &domain.MessageThread{
+				ChannelID:   ch.ID,
+				TenantID:    item.TenantID,
+				Fingerprint: fingerprint,
+				ChatID:      ch.ChatID,
+				TGMessageID: msgID,
+			}
+			if upErr := w.deps.MessageThreads.Upsert(ctx, thread); upErr != nil {
+				w.deps.Logger.Warn("pipeline.worker upsert message_thread failed",
+					"worker_id", w.cfg.WorkerID,
+					"outbox_id", item.ID,
+					"channel_id", item.ChannelID,
+					"fingerprint", fingerprint,
+					"err", upErr.Error())
+			}
+		}
 		return true, nil
 	}
 
-	// Classify failure.
+	if !w.handleSendErr(ctx, item, text, sendErr) {
+		// handleSendErr returns false only when no terminal action ran —
+		// keep the original behaviour: report didWork=true so the worker
+		// loop continues. (All current branches return true; the guard
+		// is defensive against future refactors.)
+		return true, nil
+	}
+	return true, nil
+}
+
+// handleSendErr classifies a Send or Edit failure and dispatches to the
+// transient-retry or DLQ branch. Returns true when the row's terminal
+// state (sent/retry/dead) was updated — every current path returns true
+// so the caller always reports didWork.
+func (w *Worker) handleSendErr(ctx context.Context, item *domain.PushOutbox, rendered string, sendErr error) bool {
 	if ae, ok := tg.AsAPIError(sendErr); ok {
 		switch ae.Class {
 		case tg.Transient:
-			w.handleTransient(ctx, item, text, ae)
+			w.handleTransient(ctx, item, rendered, ae)
 		case tg.PermanentClient, tg.PermanentServer:
-			w.dlq(ctx, item, text, sendErr.Error())
+			w.dlq(ctx, item, rendered, sendErr.Error())
 		default:
-			// Unknown class -> conservative retry.
-			w.markRetryOrDead(ctx, item, text, sendErr)
+			w.markRetryOrDead(ctx, item, rendered, sendErr)
 		}
 	} else {
-		// Untyped error from sender -> conservative retry.
-		w.markRetryOrDead(ctx, item, text, sendErr)
+		w.markRetryOrDead(ctx, item, rendered, sendErr)
 	}
-	return true, nil
+	return true
 }
 
 func (w *Worker) handleTransient(ctx context.Context, item *domain.PushOutbox, rendered string, ae *tg.APIError) {
@@ -291,6 +376,58 @@ func (w *Worker) markRetryOrDead(ctx context.Context, item *domain.PushOutbox, r
 		"attempts", item.Attempts,
 		"next_attempt_at", next.UTC().Format(time.RFC3339),
 		"reason", sendErr.Error())
+}
+
+// markEdited is the V7-2 sibling of markSent. The push collapsed into
+// an existing message_thread, so we MarkSent the outbox row (the work
+// is done) and log the terminal event with status=edited so the audit
+// trail distinguishes a fresh send from an in-place update. The thread
+// row's tg_message_id stays as-is (the edit keeps the original message
+// alive) so subsequent pushes continue editing the same Telegram entry.
+func (w *Worker) markEdited(ctx context.Context, item *domain.PushOutbox, rendered string, thread *domain.MessageThread) {
+	mid := thread.TGMessageID
+	log := &domain.PushLog{
+		OutboxID:     &item.ID,
+		ChannelID:    item.ChannelID,
+		TenantID:     item.TenantID,
+		PayloadJSON:  item.PayloadJSON,
+		RenderedText: rendered,
+		TGMessageID:  &mid,
+		Status:       domain.LogEdited,
+		Attempts:     item.Attempts,
+	}
+	if err := w.deps.Logs.Insert(ctx, log); err != nil {
+		w.deps.Logger.Warn("pipeline.worker insert edited log failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+	}
+	// Bump the thread's updated_at so /silence_list / future UI shows
+	// freshness without changing the underlying message_id.
+	if err := w.deps.MessageThreads.Upsert(ctx, thread); err != nil {
+		w.deps.Logger.Warn("pipeline.worker message_thread bump failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+	}
+	if err := w.deps.Outbox.MarkSent(ctx, item.ID, w.deps.Clock.Now()); err != nil {
+		w.deps.Logger.Error("pipeline.worker mark sent (after edit) failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"tg_message_id", thread.TGMessageID,
+			"err", err.Error())
+		return
+	}
+	w.deps.Logger.Info("pipeline.worker edited",
+		"worker_id", w.cfg.WorkerID,
+		"outbox_id", item.ID,
+		"channel_id", item.ChannelID,
+		"attempts", item.Attempts,
+		"tg_message_id", thread.TGMessageID,
+		"fingerprint", thread.Fingerprint)
 }
 
 func (w *Worker) markSent(ctx context.Context, item *domain.PushOutbox, rendered string, msgID int64) {
@@ -423,6 +560,29 @@ func (w *Worker) dispatchSend(ctx context.Context, botToken, chatID, parseMode, 
 		"worker_id", w.cfg.WorkerID,
 		"button_count", len(buttons))
 	return w.deps.Sender.Send(ctx, botToken, chatID, parseMode, text)
+}
+
+// extractFingerprint pulls the optional `_fingerprint` directive from
+// the decoded payload. Empty/missing/non-string values collapse to ""
+// which the worker uses as the "no V7-2 routing" sentinel: the row
+// goes through the legacy single-shot Send path with no thread bookkeeping.
+//
+// Whitespace is trimmed so callers cannot accidentally split message
+// threads by typing a trailing space; "  db01-cpu  " and "db01-cpu"
+// must collapse together.
+func extractFingerprint(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	raw, ok := payload["_fingerprint"]
+	if !ok {
+		return ""
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }
 
 // extractButtons projects payload["_buttons"] into a []domain.PushButton
