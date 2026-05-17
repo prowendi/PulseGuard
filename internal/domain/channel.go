@@ -3,14 +3,23 @@ package domain
 import "time"
 
 // ChannelTemplate is the per-channel binding to a template. IsDefault
-// means "use this template when push API does not pass ?template=".
-// Exactly one binding per channel may carry IsDefault=true; the unique
-// partial index in migration 0003 enforces this at the database layer.
+// means "use this template when push API does not pass ?template= and
+// no Condition matches". Exactly one binding per channel may carry
+// IsDefault=true; the unique partial index in migration 0003 enforces
+// this at the database layer.
+//
+// Condition is the optional `field op value` expression evaluated by
+// internal/condeval against the incoming payload. An empty Condition
+// makes the binding "default-eligible only" — it never auto-routes a
+// payload; it only fires when its IsDefault flag is set. A non-empty
+// Condition lets the worker pick this binding when the payload field
+// satisfies the operator (e.g. `level eq critical`).
 type ChannelTemplate struct {
 	ChannelID  int64
 	TemplateID int64
 	IsDefault  bool
 	SortOrder  int
+	Condition  string
 	CreatedAt  time.Time
 }
 

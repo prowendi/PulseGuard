@@ -569,3 +569,73 @@ func TestChannelRepo_ListByTenant(t *testing.T) {
 		t.Fatalf("len = %d want 2", len(got))
 	}
 }
+
+// TestChannelRepo_BindingConditionRoundtrip covers migration 0006 plus
+// the channel_repo Condition column wire-up: a binding inserted with a
+// non-empty condition must come back identically via GetByID, and the
+// default (empty-condition) binding must roundtrip the empty sentinel.
+func TestChannelRepo_BindingConditionRoundtrip(t *testing.T) {
+	f := newResourceFixture(t)
+	b := f.makeBot(t, "bot", "1:t")
+	tplCrit := f.makeTemplate(t, "critical")
+	tplDefault := f.makeTemplate(t, "default")
+	c := &domain.Channel{
+		TenantID: f.tenant.ID, Name: "alerts",
+		PushToken: "tok-cond", BotID: b.ID, ChatID: "-100",
+		RatePerMin: 60, Enabled: true,
+		Templates: []*domain.ChannelTemplate{
+			{TemplateID: tplCrit.ID, IsDefault: false, SortOrder: 0, Condition: "level eq critical"},
+			{TemplateID: tplDefault.ID, IsDefault: true, SortOrder: 1, Condition: ""},
+		},
+	}
+	if err := f.channels.Insert(context.Background(), c); err != nil {
+		t.Fatalf("insert channel with conditions: %v", err)
+	}
+	got, err := f.channels.GetByID(context.Background(), f.tenant.ID, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if len(got.Templates) != 2 {
+		t.Fatalf("bindings len = %d want 2", len(got.Templates))
+	}
+	// Bindings come back ordered by sort_order ASC.
+	if got.Templates[0].TemplateID != tplCrit.ID || got.Templates[0].Condition != "level eq critical" {
+		t.Fatalf("binding[0] = %+v, want crit + condition", got.Templates[0])
+	}
+	if got.Templates[1].TemplateID != tplDefault.ID || got.Templates[1].Condition != "" || !got.Templates[1].IsDefault {
+		t.Fatalf("binding[1] = %+v, want default + empty condition", got.Templates[1])
+	}
+}
+
+// TestChannelRepo_ReplaceTemplatesPreservesCondition guards the
+// ReplaceTemplates code path (used by the API/UI on edit) so the
+// condition column is written on the replacement insert, not silently
+// blanked.
+func TestChannelRepo_ReplaceTemplatesPreservesCondition(t *testing.T) {
+	f := newResourceFixture(t)
+	b := f.makeBot(t, "bot", "1:t")
+	tpl1 := f.makeTemplate(t, "t1")
+	tpl2 := f.makeTemplate(t, "t2")
+	c := f.makeChannel(t, "ch", "tok-replace", b.ID, tpl1.ID)
+
+	bindings := []*domain.ChannelTemplate{
+		{TemplateID: tpl1.ID, IsDefault: false, SortOrder: 0, Condition: "level in critical,fatal"},
+		{TemplateID: tpl2.ID, IsDefault: true, SortOrder: 1, Condition: ""},
+	}
+	if err := f.channels.ReplaceTemplates(context.Background(), f.tenant.ID, c.ID, bindings); err != nil {
+		t.Fatalf("ReplaceTemplates: %v", err)
+	}
+	got, err := f.channels.GetByID(context.Background(), f.tenant.ID, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if len(got.Templates) != 2 {
+		t.Fatalf("bindings len = %d", len(got.Templates))
+	}
+	if got.Templates[0].Condition != "level in critical,fatal" {
+		t.Fatalf("binding[0].Condition = %q want preserved", got.Templates[0].Condition)
+	}
+	if got.Templates[1].Condition != "" {
+		t.Fatalf("binding[1].Condition = %q want empty", got.Templates[1].Condition)
+	}
+}

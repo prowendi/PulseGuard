@@ -179,8 +179,8 @@ func (r *ChannelRepo) writeBindingsTx(ctx context.Context, tx *sql.Tx, channelID
 	}
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO channel_templates
-		  (channel_id, template_id, is_default, sort_order, created_at)
-		VALUES (?, ?, ?, ?, ?)`)
+		  (channel_id, template_id, is_default, sort_order, condition, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("prepare binding insert: %w", err)
 	}
@@ -190,7 +190,7 @@ func (r *ChannelRepo) writeBindingsTx(ctx context.Context, tx *sql.Tx, channelID
 			return fmt.Errorf("%w: binding template_id is zero", domain.ErrValidation)
 		}
 		if _, err := stmt.ExecContext(ctx, channelID, b.TemplateID,
-			boolToInt(b.IsDefault), b.SortOrder, now); err != nil {
+			boolToInt(b.IsDefault), b.SortOrder, b.Condition, now); err != nil {
 			return fmt.Errorf("insert binding: %w", err)
 		}
 		b.ChannelID = channelID
@@ -279,7 +279,7 @@ func (r *ChannelRepo) loadBindings(ctx context.Context, c *domain.Channel) error
 		return nil
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT channel_id, template_id, is_default, sort_order, created_at
+		SELECT channel_id, template_id, is_default, sort_order, condition, created_at
 		  FROM channel_templates
 		 WHERE channel_id = ?
 		 ORDER BY sort_order ASC, template_id ASC`, c.ID)
@@ -292,7 +292,7 @@ func (r *ChannelRepo) loadBindings(ctx context.Context, c *domain.Channel) error
 		b := &domain.ChannelTemplate{}
 		var isDefault int
 		var createdMs int64
-		if err := rows.Scan(&b.ChannelID, &b.TemplateID, &isDefault, &b.SortOrder, &createdMs); err != nil {
+		if err := rows.Scan(&b.ChannelID, &b.TemplateID, &isDefault, &b.SortOrder, &b.Condition, &createdMs); err != nil {
 			return fmt.Errorf("scan binding: %w", err)
 		}
 		b.IsDefault = isDefault != 0
