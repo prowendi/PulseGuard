@@ -56,18 +56,30 @@
     }, 3000);
   };
 
-  // positionPopoverFixed promotes a row-level dropdown to position:fixed
-  // anchored just below the trigger button. The default markup uses
-  // absolute positioning so each card can keep rounded corners via
-  // overflow-hidden, but that clips the popover inside the table card.
-  // Switching to fixed positioning at open time keeps the rounded card
-  // (no need to relax overflow), avoids reflowing siblings, and lets the
-  // menu drop on top of the next row / sticky table header.
+  // positionPopoverFixed lifts a row-level dropdown to position:fixed
+  // AND moves it under <body> so it escapes every ancestor's
+  // overflow-hidden / overflow-x-auto clipping. The original DOM slot
+  // is remembered on the element so clearPopoverFixed can put it back
+  // exactly where it was — important because click-outside detection
+  // calls pop.contains(target), and we still want the popover to act
+  // logically scoped to the row that opened it.
   function positionPopoverFixed(btn, pop) {
+    if (!pop.__psgDetached) {
+      pop.__psgParent = pop.parentNode;
+      pop.__psgNext = pop.nextSibling;
+      document.body.appendChild(pop);
+      pop.__psgDetached = true;
+    }
     var rect = btn.getBoundingClientRect();
+    var width = pop.offsetWidth || 176;
+    // Clamp horizontally so the popover never spills past viewport.
+    var right = window.innerWidth - rect.right;
+    if (right < 8) right = 8;
+    var maxRight = window.innerWidth - width - 8;
+    if (right > maxRight) right = maxRight;
     pop.style.position = "fixed";
     pop.style.top = (rect.bottom + 4) + "px";
-    pop.style.right = (window.innerWidth - rect.right) + "px";
+    pop.style.right = right + "px";
     pop.style.left = "";
     pop.style.zIndex = "60";
   }
@@ -78,6 +90,19 @@
     pop.style.right = "";
     pop.style.left = "";
     pop.style.zIndex = "";
+    if (pop.__psgDetached && pop.__psgParent) {
+      try {
+        if (pop.__psgNext && pop.__psgNext.parentNode === pop.__psgParent) {
+          pop.__psgParent.insertBefore(pop, pop.__psgNext);
+        } else {
+          pop.__psgParent.appendChild(pop);
+        }
+      } catch (e) {
+        // Original slot is gone (e.g., row was re-rendered); leave the
+        // popover in body — closing still works via the hidden class.
+      }
+      pop.__psgDetached = false;
+    }
   }
 
   // Toggle helper for any [data-psg-toggle="<targetId>"] button. Used by
