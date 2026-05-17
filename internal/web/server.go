@@ -48,6 +48,7 @@ func NewServer(deps Deps) http.Handler {
 		api.Use(middleware.RateLimit(deps.RateLimit))
 		mountAuthAPI(api, deps)
 		mountPushAPI(api, deps)
+		mountLarkEventsAPI(api, deps)
 		mountAuthedAPI(api, deps)
 	})
 

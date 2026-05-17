@@ -16,6 +16,17 @@ func mountPushAPI(r chi.Router, deps Deps) {
 	installPushAPIRoutes(r, deps)
 }
 
+// mountLarkEventsAPI installs the public Lark events endpoint
+// (POST /api/v1/lark/events). Public because the body signature
+// (not a PulseGuard session) is the authentication mechanism;
+// Lark's developer console would have no way to present our cookie.
+// The route is mounted under /api/v1 so the global IP rate limiter
+// still applies — a misbehaving publisher cannot starve the rest
+// of the API.
+func mountLarkEventsAPI(r chi.Router, deps Deps) {
+	installLarkEventsRoutes(r, deps)
+}
+
 // mountAuthedAPI installs every session-gated /api/v1/* endpoint.
 // CSRF + auth middleware applied here once for the whole subtree.
 //
