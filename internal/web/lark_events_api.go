@@ -33,16 +33,21 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/wendi/pulseguard/internal/lark"
+	"github.com/wendi/pulseguard/internal/scripting"
 )
 
 // MaxLarkEventBodyBytes caps the inbound payload. Lark event bodies
@@ -198,11 +203,50 @@ func apiLarkEvents(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		// LB5 stops here — LB6 will hand the verified envelope to the
-		// dispatcher. For now ACK with 200 so Lark's retry queue
-		// doesn't flood while events land for a bot that has not yet
-		// been migrated to the dispatcher.
-		writeJSON(w, http.StatusOK, map[string]any{"status": "accepted"})
+		// Past this point the inbound is authenticated. LB6: parse the
+		// IM message event, extract /command name+args, dispatch to
+		// Starlark, then reply via the AppClient by reusing the
+		// runtime senderRouter (deps.TG) — the lark-app:// derived
+		// BotToken on the bot row routes the reply to the right
+		// AppClient automatically.
+		msg, ok := parseInboundMessage(body)
+		if !ok {
+			// Not a message event we know how to handle — ack with 200
+			// so Lark stops retrying. This covers card-action events,
+			// member-join events, etc., which LB6 deliberately
+			// ignores.
+			writeJSON(w, http.StatusOK, map[string]any{"status": "accepted"})
+			return
+		}
+		name, args, ok := parseSlashCommand(msg.text)
+		if !ok {
+			// Non-slash messages (plain chat, mentions without a
+			// command, etc.) are acknowledged silently.
+			writeJSON(w, http.StatusOK, map[string]any{"status": "accepted"})
+			return
+		}
+		reply, dispatched := dispatchLarkCommand(r.Context(), deps, bot, msg.chatID, name, args)
+		if !dispatched {
+			// Unknown / disabled command: stay silent (matches the
+			// telegram listener's ErrDispatchSkip semantics).
+			writeJSON(w, http.StatusOK, map[string]any{"status": "accepted"})
+			return
+		}
+		// Send the reply. We bypass deps.TG (the production
+		// senderRouter) when it is nil — tests can substitute a fake
+		// sender via deps.TG; if neither is wired we just log the
+		// payload at info.
+		if deps.TG != nil && reply != "" {
+			if _, sendErr := deps.TG.Send(r.Context(), bot.BotToken, msg.chatID, "", reply); sendErr != nil {
+				if deps.Logger != nil {
+					deps.Logger.Warn("lark events: reply send failed",
+						"bot_id", bot.ID,
+						"tenant_id", bot.TenantID,
+						"err", sendErr.Error())
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "dispatched"})
 	}
 }
 
@@ -295,3 +339,200 @@ func ComputeLarkSignature(encryptKey, timestamp, nonce string, body []byte) stri
 func reuseBody(body []byte) io.ReadCloser {
 	return io.NopCloser(bytes.NewReader(body))
 }
+
+// inboundMessage is the projection of an im.message.receive_v1 event
+// the LB6 dispatcher cares about: the plain-text body the user typed
+// plus the chat_id we reply to. open_chat_id is preferred over chat_id
+// because Lark's IM API expects the open_chat_id when receive_id_type
+// is "chat_id" (the AppClient default).
+type inboundMessage struct {
+	chatID string
+	text   string
+}
+
+// parseInboundMessage extracts (chatID, text) from a v2 event body.
+// Returns (zero, false) for any non-text message_receive event so
+// the handler ACKs silently rather than producing noise.
+//
+// The Lark IM event shape is doubly-encoded: event.message.content
+// is a STRING containing JSON like {"text":"/echo hi"}. We unmarshal
+// twice to recover the raw user text.
+func parseInboundMessage(body []byte) (inboundMessage, bool) {
+	var env struct {
+		Header struct {
+			EventType string `json:"event_type"`
+		} `json:"header"`
+		Event struct {
+			Message struct {
+				ChatID      string `json:"chat_id"`
+				OpenChatID  string `json:"open_chat_id"`
+				MessageType string `json:"message_type"`
+				Content     string `json:"content"`
+			} `json:"message"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return inboundMessage{}, false
+	}
+	if env.Header.EventType != "" && env.Header.EventType != "im.message.receive_v1" {
+		return inboundMessage{}, false
+	}
+	if env.Event.Message.MessageType != "text" {
+		return inboundMessage{}, false
+	}
+	// Doubly-encoded content: parse the inner JSON object to extract
+	// the user's text. {"text":"<actual user text>"}.
+	var inner struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(env.Event.Message.Content), &inner); err != nil {
+		return inboundMessage{}, false
+	}
+	chat := env.Event.Message.OpenChatID
+	if chat == "" {
+		chat = env.Event.Message.ChatID
+	}
+	if chat == "" || inner.Text == "" {
+		return inboundMessage{}, false
+	}
+	return inboundMessage{chatID: chat, text: inner.Text}, true
+}
+
+// parseSlashCommand splits a "/name arg1 arg2 ..." string into (name,
+// args, true) when the input starts with "/", or (zero, false)
+// otherwise. The name is stripped of the leading "/" AND of any
+// "@botname" suffix the Lark client appends when users tap the
+// inline command picker, matching the Telegram listener's
+// normalisation rules.
+func parseSlashCommand(text string) (string, []string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "/") {
+		return "", nil, false
+	}
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	if trimmed == "" {
+		return "", nil, false
+	}
+	parts := strings.Fields(trimmed)
+	if len(parts) == 0 {
+		return "", nil, false
+	}
+	name := parts[0]
+	if i := strings.IndexByte(name, '@'); i >= 0 {
+		// "@bot" with no preceding command is invalid (i==0); a non-
+		// zero index means the user typed "/cmd@bot ..." and we
+		// keep only the bit before the '@'.
+		name = name[:i]
+	}
+	if name == "" {
+		return "", nil, false
+	}
+	return name, parts[1:], true
+}
+
+// dispatchLarkCommand resolves the command via deps.Commands, executes
+// it through deps.ScriptExec, upserts the Lark subscriber, and
+// returns (replyText, dispatched). When the command is unknown /
+// disabled or no executor is wired, dispatched=false and the caller
+// stays silent.
+//
+// We deliberately do not reuse the Telegram-typed cmdrun.Dispatcher
+// here because its DispatchInput uses int64 ChatID, which doesn't
+// round-trip Lark's opaque "oc_..." identifiers. The duplication is
+// small (~30 lines) and avoids introducing a wider interface change
+// for a single new platform.
+func dispatchLarkCommand(ctx context.Context, deps Deps, bot *domain.Bot, chatID, name string, args []string) (string, bool) {
+	if deps.Commands == nil || deps.ScriptExec == nil {
+		return "", false
+	}
+	cmd, err := resolveLarkCommand(ctx, deps, bot.ID, name)
+	if err != nil {
+		// Unknown / disabled / repo error — stay silent. Repo errors
+		// are logged so on-call still sees them; the user just gets
+		// no reply.
+		if !errors.Is(err, domain.ErrNotFound) && deps.Logger != nil {
+			deps.Logger.Warn("lark events: command resolve failed",
+				"bot_id", bot.ID,
+				"tenant_id", bot.TenantID,
+				"name", name,
+				"err", err.Error())
+		}
+		return "", false
+	}
+	// Upsert subscriber before executing so a slow / failed script
+	// still leaves an audit trail of who tried what.
+	if deps.Subscribers != nil {
+		upErr := deps.Subscribers.Upsert(ctx, &domain.Subscriber{
+			TenantID:  cmd.TenantID,
+			CommandID: cmd.ID,
+			BotID:     bot.ID,
+			ChatID:    chatID,
+			Platform:  domain.PlatformLark,
+		})
+		if upErr != nil && deps.Logger != nil {
+			deps.Logger.Warn("lark events: subscriber upsert failed",
+				"bot_id", bot.ID,
+				"tenant_id", bot.TenantID,
+				"command_id", cmd.ID,
+				"err", upErr.Error())
+		}
+	}
+	res, runErr := deps.ScriptExec.Execute(ctx, cmd.Code, args)
+	if runErr != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("lark events: command execution failed",
+				"bot_id", bot.ID,
+				"tenant_id", bot.TenantID,
+				"command_id", cmd.ID,
+				"err", runErr.Error())
+		}
+		// Surface a generic Chinese-friendly fail message so the user
+		// in the Lark chat sees the dispatch ran. Distinguishing
+		// timeout / unsafe-host / etc. is not worth the extra
+		// branches at this layer — the operator gets the precise
+		// classification in the structured log.
+		return fmt.Sprintf("命令 %q 执行失败", name), true
+	}
+	return stitchScriptResult(res), true
+}
+
+// resolveLarkCommand mirrors cmdrun.Dispatcher.resolve: try the "/"+
+// prefixed form first (UI convention), then the bare name. Returns
+// ErrNotFound when neither shape matches an enabled row.
+func resolveLarkCommand(ctx context.Context, deps Deps, botID int64, name string) (*domain.Command, error) {
+	candidates := []string{"/" + name, name}
+	for _, n := range candidates {
+		c, err := deps.Commands.GetByBotAndName(ctx, botID, n)
+		if err == nil {
+			if !c.Enabled {
+				continue
+			}
+			return c, nil
+		}
+		if !errors.Is(err, domain.ErrNotFound) {
+			return nil, err
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+// stitchScriptResult joins Output + Return with a newline. Mirrors
+// the cmdrun.stitch helper byte-for-byte so the inbound chat sees
+// the same envelope shape Telegram users get.
+func stitchScriptResult(r *scripting.Result) string {
+	if r == nil {
+		return ""
+	}
+	var parts []string
+	if s := strings.TrimSpace(r.Output); s != "" {
+		parts = append(parts, s)
+	}
+	if s := strings.TrimSpace(r.Return); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// unused but referenced for future expansion. Keeps the lark import
+// alive without sprinkling underscore-imports elsewhere.
+var _ = lark.LarkAppTokenPrefix
