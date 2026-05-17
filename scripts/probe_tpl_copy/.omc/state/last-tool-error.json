@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd scripts/probe_tpl_copy && go run main.go 2>&1 | tail -15\",\"timeout\":120000,\"description\":\"Execute simplified chromedp probe\"}",
+  "error": "Exit code 1\n/usr/bin/bash: line 1: cd: scripts/probe_tpl_copy: No such file or directory",
+  "timestamp": "2026-05-17T19:21:12.203Z",
+  "retry_count": 1
+}
