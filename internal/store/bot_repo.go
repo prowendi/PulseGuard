@@ -45,12 +45,15 @@ func (r *BotRepo) Insert(ctx context.Context, b *domain.Bot) error {
 		return err
 	}
 	// bot_token_enc stays the encrypted form of BotToken for webhook
-	// rows (telegram + lark-webhook). For lark-app rows it carries the
-	// encrypted empty string so the NOT NULL constraint passes; the
-	// real secret lives in app_secret_enc and BotToken is derived on
-	// read.
+	// rows (telegram + lark-webhook). For lark-app and smtp rows it
+	// carries the encrypted empty string so the NOT NULL constraint
+	// passes; the real secret lives in app_secret_enc / smtp_password_enc
+	// and BotToken is derived on read.
 	tokenPlain := b.BotToken
 	if b.Platform == domain.PlatformLark && b.BotKind == domain.BotKindApp {
+		tokenPlain = ""
+	}
+	if b.Platform == domain.PlatformSMTP {
 		tokenPlain = ""
 	}
 	encTok, err := r.cipher.Encrypt([]byte(tokenPlain))
@@ -64,6 +67,19 @@ func (r *BotRepo) Insert(ctx context.Context, b *domain.Bot) error {
 			return fmt.Errorf("encrypt app secret: %w", err)
 		}
 	}
+	var encSMTPPwd []byte
+	if b.SMTPPassword != "" {
+		encSMTPPwd, err = r.cipher.Encrypt([]byte(b.SMTPPassword))
+		if err != nil {
+			return fmt.Errorf("encrypt smtp password: %w", err)
+		}
+	}
+	smtpPort := b.SMTPPort
+	if smtpPort == 0 {
+		// Match the column DEFAULT 587 so in-memory round-trip matches
+		// what GetByID returns for a caller that omitted the port.
+		smtpPort = 587
+	}
 	// Default the in-memory struct so the row we wrote matches what the
 	// caller will read back. Most call sites omit the field entirely;
 	// matching the column DEFAULT keeps round-trip semantics intuitive.
@@ -73,10 +89,14 @@ func (r *BotRepo) Insert(ctx context.Context, b *domain.Bot) error {
 	now := nowMs(r.clock)
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO bots (tenant_id, name, platform, bot_kind, bot_token_enc, description, enabled,
-		                  app_id, app_secret_enc, verify_token, encrypt_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                  app_id, app_secret_enc, verify_token, encrypt_key,
+		                  smtp_host, smtp_port, smtp_username, smtp_password_enc, smtp_from, smtp_use_tls,
+		                  created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.TenantID, b.Name, b.Platform, b.BotKind, encTok, b.Description, boolToInt(b.Enabled),
-		b.AppID, encSecret, b.VerifyToken, b.EncryptKey, now, now)
+		b.AppID, encSecret, b.VerifyToken, b.EncryptKey,
+		b.SMTPHost, smtpPort, b.SMTPUsername, encSMTPPwd, b.SMTPFrom, boolToInt(b.SMTPUseTLS),
+		now, now)
 	if err != nil {
 		return fmt.Errorf("insert bot: %w", err)
 	}
@@ -85,12 +105,16 @@ func (r *BotRepo) Insert(ctx context.Context, b *domain.Bot) error {
 		return fmt.Errorf("last insert id: %w", err)
 	}
 	b.ID = id
+	b.SMTPPort = smtpPort
 	b.CreatedAt = toTime(now)
 	b.UpdatedAt = toTime(now)
 	// For lark-app rows, surface the derived BotToken to the caller so
 	// in-memory round-trips match what GetByID would return.
 	if b.Platform == domain.PlatformLark && b.BotKind == domain.BotKindApp {
 		b.BotToken = appBotToken(b.AppID, b.AppSecret)
+	}
+	if b.Platform == domain.PlatformSMTP {
+		b.BotToken = smtpBotToken(b)
 	}
 	return nil
 }
@@ -117,6 +141,9 @@ func (r *BotRepo) Update(ctx context.Context, b *domain.Bot) error {
 	if b.Platform == domain.PlatformLark && b.BotKind == domain.BotKindApp {
 		tokenPlain = ""
 	}
+	if b.Platform == domain.PlatformSMTP {
+		tokenPlain = ""
+	}
 	encTok, err := r.cipher.Encrypt([]byte(tokenPlain))
 	if err != nil {
 		return fmt.Errorf("encrypt bot token: %w", err)
@@ -138,13 +165,38 @@ func (r *BotRepo) Update(ctx context.Context, b *domain.Bot) error {
 			return fmt.Errorf("select existing app secret: %w", err)
 		}
 	}
+	// SMTPPassword preservation: same "blank = keep" semantics as
+	// AppSecret. Operators editing the host/port without re-typing the
+	// password should not lose their stored credential.
+	var encSMTPPwd []byte
+	if b.SMTPPassword != "" {
+		encSMTPPwd, err = r.cipher.Encrypt([]byte(b.SMTPPassword))
+		if err != nil {
+			return fmt.Errorf("encrypt smtp password: %w", err)
+		}
+	} else if b.Platform == domain.PlatformSMTP {
+		row := r.db.QueryRowContext(ctx,
+			`SELECT smtp_password_enc FROM bots WHERE id = ? AND tenant_id = ?`, b.ID, b.TenantID)
+		if err := row.Scan(&encSMTPPwd); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("select existing smtp password: %w", err)
+		}
+	}
+	smtpPort := b.SMTPPort
+	if smtpPort == 0 {
+		smtpPort = 587
+	}
 	now := nowMs(r.clock)
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE bots SET name = ?, platform = ?, bot_kind = ?, bot_token_enc = ?, description = ?, enabled = ?,
-		                app_id = ?, app_secret_enc = ?, verify_token = ?, encrypt_key = ?, updated_at = ?
+		                app_id = ?, app_secret_enc = ?, verify_token = ?, encrypt_key = ?,
+		                smtp_host = ?, smtp_port = ?, smtp_username = ?, smtp_password_enc = ?,
+		                smtp_from = ?, smtp_use_tls = ?,
+		                updated_at = ?
 		 WHERE id = ? AND tenant_id = ?`,
 		b.Name, b.Platform, b.BotKind, encTok, b.Description, boolToInt(b.Enabled),
-		b.AppID, encSecret, b.VerifyToken, b.EncryptKey, now, b.ID, b.TenantID)
+		b.AppID, encSecret, b.VerifyToken, b.EncryptKey,
+		b.SMTPHost, smtpPort, b.SMTPUsername, encSMTPPwd, b.SMTPFrom, boolToInt(b.SMTPUseTLS),
+		now, b.ID, b.TenantID)
 	if err != nil {
 		return fmt.Errorf("update bot: %w", err)
 	}
@@ -155,6 +207,7 @@ func (r *BotRepo) Update(ctx context.Context, b *domain.Bot) error {
 	if n == 0 {
 		return domain.ErrNotFound
 	}
+	b.SMTPPort = smtpPort
 	b.UpdatedAt = toTime(now)
 	if b.Platform == domain.PlatformLark && b.BotKind == domain.BotKindApp {
 		// Backfill AppSecret on the struct if we preserved it from disk,
@@ -166,6 +219,15 @@ func (r *BotRepo) Update(ctx context.Context, b *domain.Bot) error {
 			}
 		}
 		b.BotToken = appBotToken(b.AppID, b.AppSecret)
+	}
+	if b.Platform == domain.PlatformSMTP {
+		if b.SMTPPassword == "" && len(encSMTPPwd) > 0 {
+			plain, decErr := r.cipher.Decrypt(encSMTPPwd)
+			if decErr == nil {
+				b.SMTPPassword = string(plain)
+			}
+		}
+		b.BotToken = smtpBotToken(b)
 	}
 	return nil
 }
@@ -191,7 +253,9 @@ func (r *BotRepo) Delete(ctx context.Context, tenantID, id int64) error {
 func (r *BotRepo) GetByID(ctx context.Context, tenantID, id int64) (*domain.Bot, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, name, platform, bot_kind, bot_token_enc, description, enabled,
-		       app_id, app_secret_enc, verify_token, encrypt_key, created_at, updated_at
+		       app_id, app_secret_enc, verify_token, encrypt_key,
+		       smtp_host, smtp_port, smtp_username, smtp_password_enc, smtp_from, smtp_use_tls,
+		       created_at, updated_at
 		  FROM bots WHERE id = ? AND tenant_id = ?`, id, tenantID)
 	return r.scanBot(row)
 }
@@ -200,7 +264,9 @@ func (r *BotRepo) GetByID(ctx context.Context, tenantID, id int64) (*domain.Bot,
 func (r *BotRepo) ListByTenant(ctx context.Context, tenantID int64) ([]*domain.Bot, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, tenant_id, name, platform, bot_kind, bot_token_enc, description, enabled,
-		       app_id, app_secret_enc, verify_token, encrypt_key, created_at, updated_at
+		       app_id, app_secret_enc, verify_token, encrypt_key,
+		       smtp_host, smtp_port, smtp_username, smtp_password_enc, smtp_from, smtp_use_tls,
+		       created_at, updated_at
 		  FROM bots WHERE tenant_id = ? ORDER BY id ASC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list bots: %w", err)
@@ -225,7 +291,9 @@ func (r *BotRepo) ListByTenant(ctx context.Context, tenantID int64) ([]*domain.B
 func (r *BotRepo) ListAll(ctx context.Context) ([]*domain.Bot, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, tenant_id, name, platform, bot_kind, bot_token_enc, description, enabled,
-		       app_id, app_secret_enc, verify_token, encrypt_key, created_at, updated_at
+		       app_id, app_secret_enc, verify_token, encrypt_key,
+		       smtp_host, smtp_port, smtp_username, smtp_password_enc, smtp_from, smtp_use_tls,
+		       created_at, updated_at
 		  FROM bots ORDER BY id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list all bots: %w", err)
@@ -269,12 +337,13 @@ func (r *BotRepo) scanBot(s interface {
 	Scan(dest ...any) error
 }) (*domain.Bot, error) {
 	b := &domain.Bot{}
-	var encTok, encSecret []byte
+	var encTok, encSecret, encSMTPPwd []byte
 	var createdMs, updatedMs int64
-	var enabledInt int
+	var enabledInt, smtpUseTLSInt int
 	err := s.Scan(&b.ID, &b.TenantID, &b.Name, &b.Platform, &b.BotKind,
 		&encTok, &b.Description, &enabledInt,
 		&b.AppID, &encSecret, &b.VerifyToken, &b.EncryptKey,
+		&b.SMTPHost, &b.SMTPPort, &b.SMTPUsername, &encSMTPPwd, &b.SMTPFrom, &smtpUseTLSInt,
 		&createdMs, &updatedMs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
@@ -301,10 +370,22 @@ func (r *BotRepo) scanBot(s interface {
 		}
 		b.AppSecret = string(plainSec)
 	}
-	// Derive BotToken for lark-app rows so the runtime sender_router
-	// (which only sees BotToken) can route via the lark-app:// prefix.
+	if len(encSMTPPwd) > 0 {
+		plainPwd, err := r.cipher.Decrypt(encSMTPPwd)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt smtp password: %w", err)
+		}
+		b.SMTPPassword = string(plainPwd)
+	}
+	b.SMTPUseTLS = smtpUseTLSInt != 0
+	// Derive BotToken for lark-app and smtp rows so the runtime
+	// sender_router (which only sees BotToken) can route via the
+	// pseudo-URL prefix without needing the full Bot struct.
 	if b.Platform == domain.PlatformLark && b.BotKind == domain.BotKindApp {
 		b.BotToken = appBotToken(b.AppID, b.AppSecret)
+	}
+	if b.Platform == domain.PlatformSMTP {
+		b.BotToken = smtpBotToken(b)
 	}
 	b.Enabled = enabledInt != 0
 	b.CreatedAt = toTime(createdMs)
@@ -327,6 +408,41 @@ func appBotToken(appID, secret string) string {
 	q := url.Values{}
 	q.Set("secret", secret)
 	return "lark-app://" + appID + "?" + q.Encode()
+}
+
+// smtpBotToken assembles the smtp:// pseudo-URL the runtime
+// sender_router uses to identify a smtp bot row. Format:
+//
+//	smtp://<user>:<pass>@<host>:<port>?from=<from>&tls=<0|1>
+//
+// All components are URL-escaped via url.URL so values containing
+// reserved characters round-trip safely. Carries the plaintext
+// password — must NOT be logged or displayed. The sender_router
+// parses this back into a fully wired SMTPClient invocation.
+func smtpBotToken(b *domain.Bot) string {
+	if b == nil {
+		return ""
+	}
+	port := b.SMTPPort
+	if port == 0 {
+		port = 587
+	}
+	q := url.Values{}
+	if b.SMTPFrom != "" {
+		q.Set("from", b.SMTPFrom)
+	}
+	if b.SMTPUseTLS {
+		q.Set("tls", "1")
+	} else {
+		q.Set("tls", "0")
+	}
+	u := url.URL{
+		Scheme:   "smtp",
+		User:     url.UserPassword(b.SMTPUsername, b.SMTPPassword),
+		Host:     fmt.Sprintf("%s:%d", b.SMTPHost, port),
+		RawQuery: q.Encode(),
+	}
+	return u.String()
 }
 
 func validateBot(b *domain.Bot) error {
@@ -363,6 +479,25 @@ func validateBot(b *domain.Bot) error {
 	if b.BotKind == domain.BotKindApp && b.Platform != domain.PlatformLark {
 		return fmt.Errorf("%w: bot kind %q requires platform %q (got %q)",
 			domain.ErrValidation, b.BotKind, domain.PlatformLark, b.Platform)
+	}
+	// SMTP-specific validation: host/port/username/from required (the
+	// password may be empty on Update to preserve the existing value,
+	// same as AppSecret). Port must be in the valid TCP range.
+	if b.Platform == domain.PlatformSMTP {
+		if b.SMTPHost == "" {
+			return fmt.Errorf("%w: smtp_host is empty", domain.ErrValidation)
+		}
+		if b.SMTPUsername == "" {
+			return fmt.Errorf("%w: smtp_username is empty", domain.ErrValidation)
+		}
+		port := b.SMTPPort
+		if port == 0 {
+			port = 587
+		}
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("%w: smtp_port out of range (1-65535)", domain.ErrValidation)
+		}
+		return nil
 	}
 	if b.BotKind == domain.BotKindApp {
 		if b.AppID == "" {

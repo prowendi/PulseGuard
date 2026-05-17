@@ -13,6 +13,7 @@ import (
 	"github.com/prowendi/PulseGuard/internal/config"
 	"github.com/prowendi/PulseGuard/internal/domain"
 	"github.com/prowendi/PulseGuard/internal/lark"
+	"github.com/prowendi/PulseGuard/internal/smtp"
 	"github.com/prowendi/PulseGuard/internal/tg"
 )
 
@@ -128,8 +129,9 @@ func TestRouterSendRoutesTelegram(t *testing.T) {
 	// error — surfacing the bug as a non-nil error here.
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
+	smtpC := smtp.New(500 * time.Millisecond)
 
-	r := newSenderRouter(cs, larkC, appC)
+	r := newSenderRouter(cs, larkC, appC, smtpC)
 
 	msgID, err := r.Send(context.Background(), "12345:tg-token", "chat-1", "MarkdownV2", "hi")
 	if err != nil {
@@ -156,7 +158,8 @@ func TestRouterSendRoutesLark(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(cs, larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC, smtpC)
 
 	_, err := r.Send(context.Background(), canonicalLarkWebhook, "ignored", "ignored", "hi from lark")
 	if err == nil {
@@ -179,7 +182,8 @@ func TestRouterSendRoutesLarkApp(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(cs, larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC, smtpC)
 
 	_, err := r.Send(context.Background(), canonicalLarkApp, "oc_chat", "MarkdownV2", "hi from app")
 	if err == nil {
@@ -202,7 +206,8 @@ func TestRouterSendWithOptsTelegramPreservesButtons(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(cs, larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC, smtpC)
 
 	opts := domain.SendOptions{
 		Buttons: []domain.PushButton{{Text: "ACK", Callback: "ack:abc"}},
@@ -229,7 +234,8 @@ func TestRouterEditMessageLarkRoutesToLark(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(cs, larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC, smtpC)
 
 	err := r.EditMessage(context.Background(), canonicalLarkWebhook, "chat", 42, "", "edited")
 	if err == nil {
@@ -251,7 +257,8 @@ func TestRouterEditMessageLarkAppFallsBackToSend(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(cs, larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC, smtpC)
 
 	err := r.EditMessage(context.Background(), canonicalLarkApp, "oc", 42, "", "edited")
 	if err == nil {
@@ -273,7 +280,8 @@ func TestRouterEditMessageTelegramRoutesToEdit(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(cs, larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC, smtpC)
 
 	if err := r.EditMessage(context.Background(), "12345:tok", "chat", 99, "", "edit"); err != nil {
 		t.Fatalf("EditMessage err = %v", err)
@@ -298,7 +306,8 @@ func TestRouterFallbackWhenTGSenderLacksOpts(t *testing.T) {
 	plain := &plainSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(plain, larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(plain, larkC, appC, smtpC)
 
 	if _, err := r.SendWithOpts(context.Background(), "12345:tok", "c", "", "x", domain.SendOptions{Buttons: []domain.PushButton{{Text: "ack"}}}); err != nil {
 		t.Fatalf("SendWithOpts err = %v", err)
@@ -334,7 +343,8 @@ func TestRouterRoundTripWithRealTelegramHTTPTest(t *testing.T) {
 	tgClient := tg.New(config.Telegram{APIBase: tgSrv.URL, HTTPTimeout: config.Duration(2 * time.Second)})
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
 	appC := newTestAppClient(500 * time.Millisecond)
-	r := newSenderRouter(newTGSenderAdapter(tgClient), larkC, appC)
+	smtpC := smtp.New(500 * time.Millisecond)
+	r := newSenderRouter(newTGSenderAdapter(tgClient), larkC, appC, smtpC)
 
 	msgID, err := r.SendWithOpts(context.Background(), "12345:tg", "chat-1", "MarkdownV2", "real call", domain.SendOptions{
 		Buttons: []domain.PushButton{{Text: "ACK", Callback: "ack:fp"}},

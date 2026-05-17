@@ -67,6 +67,11 @@
                       data-app-id="{{ .AppID }}"
                       data-verify-token-set="{{ if .VerifyTokenSet }}1{{ else }}0{{ end }}"
                       data-encrypt-key-set="{{ if .EncryptKeySet }}1{{ else }}0{{ end }}"
+                      data-smtp-host="{{ .SMTPHost }}"
+                      data-smtp-port="{{ .SMTPPort }}"
+                      data-smtp-username="{{ .SMTPUsername }}"
+                      data-smtp-from="{{ .SMTPFrom }}"
+                      data-smtp-use-tls="{{ if .SMTPUseTLS }}1{{ else }}0{{ end }}"
                       class="inline-flex items-center gap-1 text-[12.5px] text-emerald-600 hover:text-emerald-700 font-medium hover:bg-emerald-50 px-2 py-1 rounded transition-colors dark:hover:bg-emerald-500/10">编辑</button>
               <form method="POST" action="/ui/bots/{{ .ID }}/delete" data-confirm="确认删除？此操作不可撤销。" class="inline ml-1">
                 <input type="hidden" name="csrf" value="{{ $csrf }}">
@@ -106,8 +111,9 @@
         <select name="platform" data-action="lark-kind-platform" data-scope="new" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
           <option value="telegram" selected>Telegram</option>
           <option value="lark">Lark / 飞书</option>
+          <option value="smtp">SMTP (邮件)</option>
         </select>
-        <p class="mt-1.5 text-[11.5px] text-slate-500">Telegram 全双向（push + listener + 内联按钮）；Lark 支持 Webhook（仅 push）与 应用机器人（双向 + 事件订阅）。</p>
+        <p class="mt-1.5 text-[11.5px] text-slate-500">Telegram 全双向（push + listener + 内联按钮）；Lark 支持 Webhook（仅 push）与 应用机器人（双向 + 事件订阅）；SMTP 仅推送邮件，无命令支持。</p>
       </div>
       <div data-scope="new-kind-row" class="hidden">
         <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Lark 类型</label>
@@ -149,6 +155,35 @@
         </div>
         <p class="text-[11.5px] text-slate-500">事件订阅 URL 请填 <code class="px-1 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">POST /api/v1/lark/events</code>。Encrypt Key 用于校验 X-Lark-Signature。</p>
       </div>
+      <div data-scope="new-smtp-fields" class="hidden space-y-4">
+        <div class="grid grid-cols-3 gap-3">
+          <div class="psg-float-wrap col-span-2">
+            <input type="text" id="bns_host" name="smtp_host" placeholder="smtp.gmail.com" class="psg-float-input font-mono">
+            <label for="bns_host" class="psg-float-label">SMTP Host</label>
+          </div>
+          <div class="psg-float-wrap">
+            <input type="number" id="bns_port" name="smtp_port" placeholder="587" value="587" min="1" max="65535" class="psg-float-input font-mono">
+            <label for="bns_port" class="psg-float-label">Port</label>
+          </div>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bns_user" name="smtp_username" placeholder="alerts@example.com" class="psg-float-input font-mono">
+          <label for="bns_user" class="psg-float-label">SMTP Username</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="password" id="bns_pwd" name="smtp_password" placeholder="App password / SMTP token" class="psg-float-input font-mono">
+          <label for="bns_pwd" class="psg-float-label">SMTP Password</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bns_from" name="smtp_from" placeholder="PulseGuard Alerts &lt;alerts@example.com&gt;（留空使用 username）" class="psg-float-input font-mono">
+          <label for="bns_from" class="psg-float-label">From 地址（可选）</label>
+        </div>
+        <label class="inline-flex items-center gap-2 text-[13px] text-slate-700 dark:text-slate-300">
+          <input type="checkbox" name="smtp_use_tls" value="1" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500/30">
+          使用 TLS（587 STARTTLS / 465 隐式）；非 localhost 强烈建议保持勾选
+        </label>
+        <p class="text-[11.5px] text-slate-500">Channel.chat_id 在 SMTP 下当作收件人，多人用逗号分隔。模板渲染后的<strong>第一行</strong>会作为邮件主题，<code class="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">\n\n</code> 之后是正文。parse_mode=HTML 会以 text/html 发送。</p>
+      </div>
       <div class="psg-float-wrap">
         <input type="text" id="bd" name="description" placeholder="可选描述" class="psg-float-input">
         <label for="bd" class="psg-float-label">描述（可选）</label>
@@ -187,6 +222,7 @@
         <select name="platform" data-action="lark-kind-platform" data-scope="edit" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
           <option value="telegram">Telegram</option>
           <option value="lark">Lark / 飞书</option>
+          <option value="smtp">SMTP (邮件)</option>
         </select>
       </div>
       <div data-scope="edit-kind-row" class="hidden">
@@ -226,6 +262,34 @@
           <input type="password" id="bea_ek" name="encrypt_key" placeholder="留空 = 不修改 Encrypt Key" class="psg-float-input font-mono">
           <label for="bea_ek" class="psg-float-label">Encrypt Key</label>
         </div>
+      </div>
+      <div data-scope="edit-smtp-fields" class="hidden space-y-4">
+        <div class="grid grid-cols-3 gap-3">
+          <div class="psg-float-wrap col-span-2">
+            <input type="text" id="bes_host" name="smtp_host" placeholder="smtp.gmail.com" class="psg-float-input font-mono">
+            <label for="bes_host" class="psg-float-label">SMTP Host</label>
+          </div>
+          <div class="psg-float-wrap">
+            <input type="number" id="bes_port" name="smtp_port" placeholder="587" min="1" max="65535" class="psg-float-input font-mono">
+            <label for="bes_port" class="psg-float-label">Port</label>
+          </div>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bes_user" name="smtp_username" placeholder="alerts@example.com" class="psg-float-input font-mono">
+          <label for="bes_user" class="psg-float-label">SMTP Username</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="password" id="bes_pwd" name="smtp_password" placeholder="留空 = 不修改密码" class="psg-float-input font-mono">
+          <label for="bes_pwd" class="psg-float-label">SMTP Password（可选）</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bes_from" name="smtp_from" placeholder="PulseGuard Alerts &lt;alerts@example.com&gt;" class="psg-float-input font-mono">
+          <label for="bes_from" class="psg-float-label">From 地址（可选）</label>
+        </div>
+        <label class="inline-flex items-center gap-2 text-[13px] text-slate-700 dark:text-slate-300">
+          <input type="checkbox" name="smtp_use_tls" value="1" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500/30">
+          使用 TLS（587 STARTTLS / 465 隐式）
+        </label>
       </div>
       <div class="psg-float-wrap">
         <input type="text" id="bed" name="description" placeholder="可选描述" class="psg-float-input">

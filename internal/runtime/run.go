@@ -28,6 +28,7 @@ import (
 	"github.com/prowendi/PulseGuard/internal/platform"
 	"github.com/prowendi/PulseGuard/internal/platform/telegram"
 	"github.com/prowendi/PulseGuard/internal/scripting"
+	"github.com/prowendi/PulseGuard/internal/smtp"
 	"github.com/prowendi/PulseGuard/internal/store"
 	"github.com/prowendi/PulseGuard/internal/tg"
 	"github.com/prowendi/PulseGuard/internal/web"
@@ -154,10 +155,15 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	}
 	larkOAuth := lark.NewOAuthClient(larkTimeout)
 	larkAppClient := lark.NewAppClient(larkOAuth, larkTimeout)
+	// SMTP client is stateless — each Send dials + auth + transmits +
+	// quits. timeout matches the lark/telegram budget so a hung relay
+	// can't pin a worker beyond the operator's expectations.
+	mailClient := smtp.New(larkTimeout)
 	var sender domain.Sender = newSenderRouter(
 		newTGSenderAdapter(tg.New(cfg.Telegram)),
 		lark.New(cfg.Telegram),
 		larkAppClient,
+		mailClient,
 	)
 	if ov.Sender != nil {
 		sender = ov.Sender

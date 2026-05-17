@@ -49,6 +49,16 @@ type botView struct {
 	VerifyTokenSet  bool          `json:"verify_token_set"`
 	EncryptKeySet   bool          `json:"encrypt_key_set"`
 	AppSecretSet    bool          `json:"app_secret_set"`
+	// SMTP fields (populated for Platform=="smtp" rows). The password
+	// is masked to a boolean for the same reason app_secret is — once
+	// stored, the API never returns the plaintext. Host / port / from
+	// / username are operator-visible config and round-trip openly.
+	SMTPHost        string        `json:"smtp_host,omitempty"`
+	SMTPPort        int           `json:"smtp_port,omitempty"`
+	SMTPUsername    string        `json:"smtp_username,omitempty"`
+	SMTPFrom        string        `json:"smtp_from,omitempty"`
+	SMTPUseTLS      bool          `json:"smtp_use_tls,omitempty"`
+	SMTPPasswordSet bool          `json:"smtp_password_set"`
 	CreatedAt       string        `json:"created_at"`
 	UpdatedAt       string        `json:"updated_at"`
 	Health          botHealthView `json:"health"`
@@ -128,27 +138,35 @@ func toBotViewWithHealth(b *domain.Bot, h platform.BotHealth, now time.Time) bot
 		kind = domain.BotKindWebhook
 	}
 	// For app-mode lark bots the BotToken is a lark-app://... derived
-	// pseudo-URL, not a credential the operator pasted. Suppress the
-	// last-4 hint so the UI doesn't render garbled URL fragments where
-	// users expect their Telegram secret tail.
-	if kind == domain.BotKindApp {
+	// pseudo-URL, not a credential the operator pasted. For smtp rows
+	// the BotToken is a derived smtp:// pseudo-URL embedding the
+	// password. In both cases, suppress the last-4 hint so the UI
+	// doesn't surface fragments of a derived/secret URL where users
+	// expect to see their actual relay credential or token tail.
+	if kind == domain.BotKindApp || b.Platform == domain.PlatformSMTP {
 		last4 = ""
 	}
 	return botView{
-		ID:             b.ID,
-		Name:           b.Name,
-		Platform:       b.Platform,
-		BotKind:        kind,
-		Description:    b.Description,
-		BotTokenLast4:  last4,
-		Enabled:        b.Enabled,
-		AppID:          b.AppID,
-		VerifyTokenSet: b.VerifyToken != "",
-		EncryptKeySet:  b.EncryptKey != "",
-		AppSecretSet:   b.AppSecret != "",
-		CreatedAt:      b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:      b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		Health:         hv,
+		ID:              b.ID,
+		Name:            b.Name,
+		Platform:        b.Platform,
+		BotKind:         kind,
+		Description:     b.Description,
+		BotTokenLast4:   last4,
+		Enabled:         b.Enabled,
+		AppID:           b.AppID,
+		VerifyTokenSet:  b.VerifyToken != "",
+		EncryptKeySet:   b.EncryptKey != "",
+		AppSecretSet:    b.AppSecret != "",
+		SMTPHost:        b.SMTPHost,
+		SMTPPort:        b.SMTPPort,
+		SMTPUsername:    b.SMTPUsername,
+		SMTPFrom:        b.SMTPFrom,
+		SMTPUseTLS:      b.SMTPUseTLS,
+		SMTPPasswordSet: b.SMTPPassword != "",
+		CreatedAt:       b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:       b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		Health:          hv,
 	}
 }
 
@@ -175,6 +193,15 @@ type botCreatePayload struct {
 	AppSecret   string `json:"app_secret"`
 	VerifyToken string `json:"verify_token"`
 	EncryptKey  string `json:"encrypt_key"`
+	// SMTP: required when platform=="smtp". smtp_port defaults to 587;
+	// smtp_use_tls defaults to true. smtp_from defaults to smtp_username
+	// when empty (server-side, in the SMTP client).
+	SMTPHost     string `json:"smtp_host"`
+	SMTPPort     int    `json:"smtp_port"`
+	SMTPUsername string `json:"smtp_username"`
+	SMTPPassword string `json:"smtp_password"`
+	SMTPFrom     string `json:"smtp_from"`
+	SMTPUseTLS   *bool  `json:"smtp_use_tls,omitempty"`
 }
 
 type botUpdatePayload struct {
@@ -190,6 +217,15 @@ type botUpdatePayload struct {
 	AppSecret   *string `json:"app_secret,omitempty"`
 	VerifyToken *string `json:"verify_token,omitempty"`
 	EncryptKey  *string `json:"encrypt_key,omitempty"`
+	// SMTP: same "blank = keep current" rule as AppSecret applies to
+	// SMTPPassword. SMTPPort=0 means "don't change"; SMTPUseTLS nil
+	// means "don't change".
+	SMTPHost     *string `json:"smtp_host,omitempty"`
+	SMTPPort     *int    `json:"smtp_port,omitempty"`
+	SMTPUsername *string `json:"smtp_username,omitempty"`
+	SMTPPassword *string `json:"smtp_password,omitempty"`
+	SMTPFrom     *string `json:"smtp_from,omitempty"`
+	SMTPUseTLS   *bool   `json:"smtp_use_tls,omitempty"`
 }
 
 func installBotsAPIRoutes(r chi.Router, deps Deps) {
@@ -261,13 +297,39 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 			return
 		}
 		isAppKind := p.BotKind == domain.BotKindApp
-		// LB7 validation matrix:
+		isSMTP := p.Platform == domain.PlatformSMTP
+		// LB7 / SMTP validation matrix:
 		//
-		// - kind=webhook → bot_token must match the platform-specific shape;
-		//   app fields are ignored.
-		// - kind=app    → app_id / app_secret / encrypt_key must be present;
-		//   bot_token is unused (the store layer derives lark-app://...).
-		if isAppKind {
+		// - platform=smtp  → host / username / password required; no
+		//   bot_token; bot_kind ignored.
+		// - kind=webhook (lark/telegram) → bot_token must match the
+		//   platform-specific shape; app fields are ignored.
+		// - kind=app (lark) → app_id / app_secret / encrypt_key must be
+		//   present; bot_token is unused (store derives lark-app://...).
+		if isSMTP {
+			p.SMTPHost = strings.TrimSpace(p.SMTPHost)
+			p.SMTPUsername = strings.TrimSpace(p.SMTPUsername)
+			p.SMTPFrom = strings.TrimSpace(p.SMTPFrom)
+			if p.SMTPHost == "" {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "smtp_host is required")
+				return
+			}
+			if p.SMTPUsername == "" {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "smtp_username is required")
+				return
+			}
+			if p.SMTPPassword == "" {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "smtp_password is required on first creation")
+				return
+			}
+			if p.SMTPPort == 0 {
+				p.SMTPPort = 587
+			}
+			if p.SMTPPort < 1 || p.SMTPPort > 65535 {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "smtp_port must be in 1-65535")
+				return
+			}
+		} else if isAppKind {
 			if p.Platform != domain.PlatformLark {
 				writeError(w, r, http.StatusBadRequest, "VALIDATION",
 					"bot_kind=app requires platform=lark")
@@ -290,17 +352,27 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 			}
 		}
 		tenant := wmw.Tenant(r.Context())
+		useTLS := true
+		if p.SMTPUseTLS != nil {
+			useTLS = *p.SMTPUseTLS
+		}
 		bot := &domain.Bot{
-			TenantID:    tenant.ID,
-			Name:        p.Name,
-			Platform:    p.Platform,
-			BotKind:     p.BotKind,
-			BotToken:    p.BotToken,
-			Description: p.Description,
-			AppID:       p.AppID,
-			AppSecret:   p.AppSecret,
-			VerifyToken: p.VerifyToken,
-			EncryptKey:  p.EncryptKey,
+			TenantID:     tenant.ID,
+			Name:         p.Name,
+			Platform:     p.Platform,
+			BotKind:      p.BotKind,
+			BotToken:     p.BotToken,
+			Description:  p.Description,
+			AppID:        p.AppID,
+			AppSecret:    p.AppSecret,
+			VerifyToken:  p.VerifyToken,
+			EncryptKey:   p.EncryptKey,
+			SMTPHost:     p.SMTPHost,
+			SMTPPort:     p.SMTPPort,
+			SMTPUsername: p.SMTPUsername,
+			SMTPPassword: p.SMTPPassword,
+			SMTPFrom:     p.SMTPFrom,
+			SMTPUseTLS:   useTLS,
 		}
 		if err := deps.Bots.Insert(r.Context(), bot); err != nil {
 			writeRepoError(w, r, deps, err)
@@ -411,6 +483,38 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 			// value and an empty string must mean "do not rotate".
 			if tok := strings.TrimSpace(*p.EncryptKey); tok != "" {
 				existing.EncryptKey = tok
+			}
+		}
+		// SMTP fields. host/username/from/port/use_tls all overwrite
+		// when the operator submits a value; smtp_password uses the
+		// "blank = keep current" rule so an edit-name flow doesn't
+		// have to re-type the relay password (the BotRepo preserves
+		// on empty).
+		if p.SMTPHost != nil {
+			existing.SMTPHost = strings.TrimSpace(*p.SMTPHost)
+		}
+		if p.SMTPUsername != nil {
+			existing.SMTPUsername = strings.TrimSpace(*p.SMTPUsername)
+		}
+		if p.SMTPFrom != nil {
+			existing.SMTPFrom = strings.TrimSpace(*p.SMTPFrom)
+		}
+		if p.SMTPPort != nil {
+			port := *p.SMTPPort
+			if port != 0 && (port < 1 || port > 65535) {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "smtp_port must be in 1-65535")
+				return
+			}
+			if port != 0 {
+				existing.SMTPPort = port
+			}
+		}
+		if p.SMTPUseTLS != nil {
+			existing.SMTPUseTLS = *p.SMTPUseTLS
+		}
+		if p.SMTPPassword != nil {
+			if pw := strings.TrimSpace(*p.SMTPPassword); pw != "" {
+				existing.SMTPPassword = pw
 			}
 		}
 		if p.BotToken != nil {

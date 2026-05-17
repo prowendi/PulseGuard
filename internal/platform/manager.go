@@ -370,6 +370,11 @@ func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 //   - domain.PlatformLark — Lark / 飞书 custom-bot webhooks. The
 //     remote side is incoming-only; there is no long-poll endpoint
 //     and no callback dispatch, so listener boot is skipped silently.
+//     (Lark application bots — bot_kind=app — are also incoming-only
+//     here; their inbound events come through the
+//     /api/v1/lark/events HTTP endpoint, not a listener goroutine.)
+//   - domain.PlatformSMTP — outbound email relay. SMTP has no
+//     "inbox" we poll, so the listener path is intentionally a no-op.
 //
 // New push-only platforms (Slack incoming-webhook, Discord webhook,
 // etc.) should add their identifier here. Bidirectional platforms
@@ -377,7 +382,7 @@ func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 // surfaced as a loud ErrUnknownPlatform instead of swallowed.
 func isPushOnlyPlatform(p string) bool {
 	switch p {
-	case domain.PlatformLark:
+	case domain.PlatformLark, domain.PlatformSMTP:
 		return true
 	default:
 		return false

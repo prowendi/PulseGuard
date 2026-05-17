@@ -159,6 +159,8 @@
   //   - platform=telegram         → kind-row hidden, webhook-fields shown
   //   - platform=lark + webhook   → kind-row shown,  webhook-fields shown
   //   - platform=lark + app       → kind-row shown,  app-fields shown
+  //   - platform=smtp             → kind-row hidden, smtp-fields shown,
+  //                                 webhook + app-fields hidden
   //
   // scope is "new" or "edit"; the data-scope attribute on each field
   // group lets the same helper drive both drawers.
@@ -169,6 +171,8 @@
     var kindRow = drawer.querySelector('[data-scope="' + scope + '-kind-row"]');
     var webFields = drawer.querySelector('[data-scope="' + scope + '-webhook-fields"]');
     var appFields = drawer.querySelector('[data-scope="' + scope + '-app-fields"]');
+    var smtpFields = drawer.querySelector('[data-scope="' + scope + '-smtp-fields"]');
+    var isSMTP = (plat === "smtp");
     var showKindRow = (plat === "lark");
     var kind = "webhook";
     if (showKindRow) {
@@ -176,8 +180,9 @@
       if (checked) kind = checked.value;
     }
     if (kindRow) kindRow.classList.toggle("hidden", !showKindRow);
-    if (webFields) webFields.classList.toggle("hidden", showKindRow && kind === "app");
-    if (appFields) appFields.classList.toggle("hidden", !(showKindRow && kind === "app"));
+    if (webFields) webFields.classList.toggle("hidden", isSMTP || (showKindRow && kind === "app"));
+    if (appFields) appFields.classList.toggle("hidden", isSMTP || !(showKindRow && kind === "app"));
+    if (smtpFields) smtpFields.classList.toggle("hidden", !isSMTP);
   }
 
   // ---- Global data-action delegation ----------------------------------
@@ -411,6 +416,17 @@
           // secret. Visual cue is the placeholder text "留空 = 不修改".
           setBot('[name="verify_token"]', "");
           setBot('[name="encrypt_key"]', "");
+          // SMTP fields. Host / port / username / from round-trip via
+          // data-* attrs (no secret leakage). Password stays blank with
+          // the "blank = keep" rule on PUT. use_tls is a checkbox; we
+          // tick it when the data-attr says "1".
+          setBot('[name="smtp_host"]', node.getAttribute("data-smtp-host"));
+          setBot('[name="smtp_port"]', node.getAttribute("data-smtp-port"));
+          setBot('[name="smtp_username"]', node.getAttribute("data-smtp-username"));
+          setBot('[name="smtp_from"]', node.getAttribute("data-smtp-from"));
+          setBot('[name="smtp_password"]', "");
+          var tlsBox = dbot.querySelector('[name="smtp_use_tls"]');
+          if (tlsBox) tlsBox.checked = node.getAttribute("data-smtp-use-tls") === "1";
           // Set bot_kind radio (default webhook for legacy rows). Find
           // the matching radio button in the edit drawer and tick it.
           var kind = node.getAttribute("data-bot-kind") || "webhook";
