@@ -127,6 +127,33 @@
           try { ta.focus({ preventScroll: true }); } catch (err) { ta.focus(); }
           break;
         }
+        case "theme-cycle": {
+          // Three-state toggle: auto ("") → light → dark → auto. Persisted
+          // via the psg-theme cookie (SameSite=Lax, 1y) so the next first
+          // paint reads the cookie server-side and emits <html class="dark">
+          // directly — no flicker, no inline <script>. We reload after
+          // setting the cookie because Tailwind's compiled CSS targets
+          // .dark via selector overrides shipped in app.css; swapping the
+          // <html> class at runtime would otherwise leave hover/focus
+          // variants stale until the next navigation.
+          e.preventDefault();
+          var cur = readCookie("psg-theme");
+          var next = "";
+          if (!cur) next = "light";
+          else if (cur === "light") next = "dark";
+          else next = ""; // dark → auto (clear cookie)
+          if (next === "") {
+            // Expire the cookie at "/" so themeFromRequest() reads auto.
+            document.cookie = "psg-theme=; Path=/; Max-Age=0; SameSite=Lax";
+          } else {
+            // 31_536_000s = 1 year. Path=/ keeps it readable across the
+            // whole UI surface. SameSite=Lax is the same posture as the
+            // session cookie so cross-site GETs do not lose preference.
+            document.cookie = "psg-theme=" + next + "; Path=/; Max-Age=31536000; SameSite=Lax";
+          }
+          window.location.reload();
+          break;
+        }
         default:
           break;
       }

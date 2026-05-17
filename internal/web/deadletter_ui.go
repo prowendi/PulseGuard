@@ -36,6 +36,7 @@ func uiDLQList(deps Deps) http.HandlerFunc {
 				Tenant: tenant,
 				Active: "deadletters",
 				CSRF:   readCSRFCookie(r),
+				Theme:  themeFromRequest(r),
 			},
 			DLQ:     views,
 			Total:   total,

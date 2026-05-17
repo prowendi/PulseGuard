@@ -161,6 +161,7 @@ func renderCommandsPage(w http.ResponseWriter, r *http.Request, deps Deps, tenan
 			Active: "commands",
 			CSRF:   readCSRFCookie(r),
 			Flash:  fl,
+			Theme:  themeFromRequest(r),
 		},
 		Commands: views,
 		Demos:    commandDemos(),

@@ -1,5 +1,5 @@
 {{ define "layout-open" }}<!doctype html>
-<html lang="zh-CN" class="h-full">
+<html lang="zh-CN" class="h-full{{ if eq .Theme "dark" }} dark{{ end }}" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}auto{{ end }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

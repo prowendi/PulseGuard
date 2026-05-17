@@ -23,6 +23,7 @@ func uiLoginGet(deps Deps) http.HandlerFunc {
 		_ = Render(w, http.StatusOK, "login-page", pageData{
 			Title: "登录",
 			CSRF:  tok,
+			Theme: themeFromRequest(r),
 		})
 	}
 }
@@ -62,6 +63,7 @@ func uiRegisterGet(deps Deps) http.HandlerFunc {
 		_ = Render(w, http.StatusOK, "register-page", pageData{
 			Title: "注册",
 			CSRF:  tok,
+			Theme: themeFromRequest(r),
 		})
 	}
 }
@@ -122,7 +124,7 @@ func uiDashboard(deps Deps) http.HandlerFunc {
 		tok := readCSRFCookie(r)
 
 		var page dashboardPage
-		page.pageData = pageData{Title: "概览", Tenant: t, Active: "dashboard", CSRF: tok}
+		page.pageData = pageData{Title: "概览", Tenant: t, Active: "dashboard", CSRF: tok, Theme: themeFromRequest(r)}
 
 		if bots, err := deps.Bots.ListByTenant(r.Context(), t.ID); err == nil {
 			page.BotCount = len(bots)
@@ -165,6 +167,7 @@ func renderAuthFlash(w http.ResponseWriter, r *http.Request, deps Deps, page, ti
 		Title: title,
 		CSRF:  tok,
 		Flash: &flash{Level: "error", Message: msg},
+		Theme: themeFromRequest(r),
 	})
 }
 

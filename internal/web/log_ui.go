@@ -58,6 +58,7 @@ func uiLogList(deps Deps) http.HandlerFunc {
 				Tenant: tenant,
 				Active: "logs",
 				CSRF:   readCSRFCookie(r),
+				Theme:  themeFromRequest(r),
 			},
 			Logs:      rows,
 			Total:     total,

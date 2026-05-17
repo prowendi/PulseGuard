@@ -159,6 +159,7 @@ func renderChannelPage(w http.ResponseWriter, r *http.Request, deps Deps, tenant
 			Active: "channels",
 			CSRF:   readCSRFCookie(r),
 			Flash:  fl,
+			Theme:  themeFromRequest(r),
 		},
 		Channels:  channels,
 		Bots:      bots,

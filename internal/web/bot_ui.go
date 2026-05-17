@@ -40,6 +40,7 @@ func uiBotList(deps Deps) http.HandlerFunc {
 				Tenant: tenant,
 				Active: "bots",
 				CSRF:   readCSRFCookie(r),
+				Theme:  themeFromRequest(r),
 			},
 			Bots: views,
 		})
@@ -113,6 +114,7 @@ func uiBotListWithFlash(w http.ResponseWriter, r *http.Request, deps Deps, tenan
 			Active: "bots",
 			CSRF:   readCSRFCookie(r),
 			Flash:  &flash{Level: level, Message: msg},
+			Theme:  themeFromRequest(r),
 		},
 		Bots: views,
 	})

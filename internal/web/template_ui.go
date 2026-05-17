@@ -92,6 +92,7 @@ func renderTemplatePage(w http.ResponseWriter, r *http.Request, deps Deps, tenan
 			Active: "templates",
 			CSRF:   readCSRFCookie(r),
 			Flash:  fl,
+			Theme:  themeFromRequest(r),
 		},
 		Templates: views,
 		Demos:     templateDemos(),

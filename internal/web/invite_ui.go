@@ -87,6 +87,7 @@ func renderInvitePage(w http.ResponseWriter, r *http.Request, deps Deps, fl *fla
 			Active: "invites",
 			CSRF:   readCSRFCookie(r),
 			Flash:  fl,
+			Theme:  themeFromRequest(r),
 		},
 		Invites: views,
 	})

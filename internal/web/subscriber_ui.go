@@ -56,6 +56,7 @@ func renderSubscribersPage(w http.ResponseWriter, r *http.Request, deps Deps, te
 			Active: "subscribers",
 			CSRF:   readCSRFCookie(r),
 			Flash:  fl,
+			Theme:  themeFromRequest(r),
 		},
 		Subscribers: views,
 	})
