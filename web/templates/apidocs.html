@@ -1,0 +1,234 @@
+{{ define "apidocs-page" }}{{ template "layout-open" . }}
+<div class="space-y-6">
+  <header class="flex flex-col gap-2">
+    <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-600">开发者</p>
+    <h1 class="text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">API 文档</h1>
+    <p class="text-sm text-slate-500">所有端点以 <code class="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[12px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">{{ .BaseURL }}</code> 为根。除 Push 端点用 push_token 鉴权外，其他都需要先登录拿到 session cookie；状态变更端点还需 <code class="px-1 rounded bg-slate-100 font-mono text-[11px] dark:bg-slate-800 dark:text-slate-200">X-CSRF-Token</code> header。</p>
+  </header>
+
+  <div class="grid grid-cols-1 xl:grid-cols-[200px_minmax(0,1fr)] gap-6">
+    <aside class="hidden xl:block">
+      <nav class="sticky top-20 space-y-1 text-[13px]">
+        <a href="#auth" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">认证</a>
+        <a href="#push" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Push 接入</a>
+        <a href="#bots" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Bots</a>
+        <a href="#templates" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Templates</a>
+        <a href="#channels" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Channels</a>
+        <a href="#commands" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Commands</a>
+        <a href="#subscribers" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Subscribers</a>
+        <a href="#logs" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Logs / DLQ</a>
+        <a href="#invites" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Invites (admin)</a>
+        <a href="#errors" class="block px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">错误码</a>
+      </nav>
+    </aside>
+
+    <div class="space-y-6 min-w-0">
+
+      {{/* ===== AUTH ===== */}}
+      <section id="auth" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">认证</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">session cookie + CSRF 双提交。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/auth/register" "注册新租户（需邀请码）" `{"email":"u@x.com","password":"...","invite_code":"ABC"}` "201 已注册 + 颁发 session cookie") }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/auth/login" "登录返回 session cookie + CSRF cookie" `{"email":"u@x.com","password":"..."}` "200 含 tenant 信息") }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/auth/logout" "登出，删 session 与 CSRF" "" "204") }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/me" "当前登录身份" "" `{"tenant":{"id":1,"email":"u@x.com","role":"user"}}`) }}
+        </div>
+      </section>
+
+      {{/* ===== PUSH ===== */}}
+      <section id="push" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Push 接入</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">把外部告警送入推送管线。Push token 来自 Channel rotate-token。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/push/{token}" "投递告警；用 push_token 鉴权（无需 session）" `{"title":"CPU high","host":"db01","level":"critical","_fingerprint":"db01-cpu","_buttons":[{"text":"我处理","callback":"ack:db01-cpu"}]}` `{"push_id":12345,"status":"queued"}`) }}
+        </div>
+        <div class="px-6 py-4 bg-slate-50 dark:bg-slate-900/60 text-[12.5px] text-slate-600 dark:text-slate-400 space-y-2">
+          <p><strong class="text-slate-900 dark:text-white">特殊字段（下划线前缀）</strong>：</p>
+          <ul class="list-disc pl-5 space-y-1">
+            <li><code class="font-mono">_fingerprint</code>: 同指纹第二次 push 走 editMessageText 合并到首条消息（去噪）</li>
+            <li><code class="font-mono">_template_id</code>: 显式指定 Channel 绑定的 template_id（覆盖 default + 条件路由）</li>
+            <li><code class="font-mono">_buttons</code>: inline keyboard，<code>callback</code> 形如 <code>ack:&lt;fingerprint&gt;</code> 用户点击即写 alert_acks</li>
+            <li><code class="font-mono">dedup_key</code>: 启用 Channel dedup_window_s 时的指纹</li>
+            <li>其余字段任意，模板里用 <code class="font-mono">.field | escMD</code> 风格的 Go template action 取（具体看模板编辑器示例）</li>
+          </ul>
+        </div>
+      </section>
+
+      {{/* ===== BOTS ===== */}}
+      <section id="bots" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Bots</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">租户私有 Telegram bot；bot_token AES-GCM 加密入库，列表只回显末 4 位。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/bots" "列出本租户全部 bot" "" `{"items":[{"id":1,"name":"prod","platform":"telegram","bot_token_last4":"Y5EQ","enabled":true}]}`) }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/bots" "新建 bot；创建后自动启动长轮询" `{"name":"prod","platform":"telegram","bot_token":"123456:ABC","description":""}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/bots/{id}" "单个 bot 详情" "" `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "PUT" "/api/v1/bots/{id}" "更新 bot；token 变化时重启 listener" `{"name":"prod","description":"...","bot_token":""}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/bots/{id}" "删除并停止 listener" "" "204") }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/bots/{id}/enable" "启用 + 启动 listener" "" "200") }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/bots/{id}/disable" "禁用 + 停止 listener" "" "200") }}
+        </div>
+      </section>
+
+      {{/* ===== TEMPLATES ===== */}}
+      <section id="templates" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Templates</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">Go text/template 语法 + Telegram 转义函数 <code class="font-mono">escMD</code>/<code class="font-mono">escHTML</code>。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/templates" "列模板" "" `{"items":[{"id":1,"name":"alert","parse_mode":"MarkdownV2","body":"..."}]}`) }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/templates" "新建" `{"name":"alert","parse_mode":"MarkdownV2","body":"🔥 [title placeholder]"}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/templates/{id}" "详情" "" `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "PUT" "/api/v1/templates/{id}" "更新" `{"name":"alert","parse_mode":"HTML","body":"..."}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/templates/{id}" "删除" "" "204") }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/templates/preview" "试运行；不入库" `{"body":"hi [name]","parse_mode":"None","sample":{"name":"alice"}}` `{"rendered":"hi alice"}`) }}
+        </div>
+      </section>
+
+      {{/* ===== CHANNELS ===== */}}
+      <section id="channels" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Channels</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">每个 Channel 绑定 1 个 Bot + 1 个 chat_id + N 个模板（含 default 与 condition 路由）。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/channels" "列通道" "" `{"items":[{"id":1,"name":"ops","push_token":"...","bot_id":1,"chat_id":"-100","templates":[{"template_id":1,"is_default":true,"condition":""}]}]}`) }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/channels" "新建" `{"name":"ops","bot_id":1,"chat_id":"-100","rate_per_min":60,"dedup_window_s":0,"enabled":true,"templates":[{"template_id":1,"is_default":true,"condition":"level eq critical"}]}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/channels/{id}" "详情" "" `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "PUT" "/api/v1/channels/{id}" "更新；templates 字段重置绑定" `{"name":"ops","bot_id":1,"chat_id":"-100","templates":[...]}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/channels/{id}" "删除" "" "204") }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/channels/{id}/rotate-token" "重新生成 push_token；旧 token 立刻失效" "" `{"push_token":"new..."}`) }}
+        </div>
+        <div class="px-6 py-4 bg-slate-50 dark:bg-slate-900/60 text-[12.5px] text-slate-600 dark:text-slate-400">
+          <p><strong class="text-slate-900 dark:text-white">Condition 路由语法</strong>：<code class="font-mono">field op value</code></p>
+          <p class="mt-1">op：<code class="font-mono">eq / ne / in / startswith / endswith / contains / gt / lt / ge / le</code>。示例：<code class="font-mono">level eq critical</code> / <code class="font-mono">value gt 90</code> / <code class="font-mono">level in critical,fatal</code></p>
+        </div>
+      </section>
+
+      {{/* ===== COMMANDS ===== */}}
+      <section id="commands" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Commands</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">Telegram 用户在私聊发 <code class="font-mono">/&lt;name&gt; [args...]</code> 触发 Starlark 脚本（沙箱执行）。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/commands" "列命令" "" `{"items":[{"id":1,"name":"echo","code":"def handle(args): return ...","enabled":true}]}`) }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/commands" "新建" `{"name":"echo","description":"echo args","code":"def handle(args):\n    return ' '.join(args)","enabled":true}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/commands/{id}" "详情" "" `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "PUT" "/api/v1/commands/{id}" "更新" `{"name":"echo","code":"...","enabled":true}` `{"id":1,...}`) }}
+          {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/commands/{id}" "删除" "" "204") }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/commands/{id}/test" "沙箱试跑；不写 subscriber" `{"args":["hello"]}` `{"output":"...","return":"hello","error":""}`) }}
+        </div>
+        <div class="px-6 py-4 bg-slate-50 dark:bg-slate-900/60 text-[12.5px] text-slate-600 dark:text-slate-400">
+          <p><strong class="text-slate-900 dark:text-white">Starlark 可用模块</strong>：<code class="font-mono">time.now()</code>、<code class="font-mono">json.encode/decode</code>、<code class="font-mono">http.get(url)</code>、<code class="font-mono">http.post(url, body)</code>、<code class="font-mono">print</code></p>
+          <p class="mt-1">脚本必须定义 <code class="font-mono">handle(args)</code> 函数；执行超时 10s；输出上限 8KB；代码上限 64KB；HTTP 不允许私网/链路本地/metadata，不跟 redirect。</p>
+        </div>
+      </section>
+
+      {{/* ===== SUBSCRIBERS ===== */}}
+      <section id="subscribers" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Subscribers</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">每次用户在 TG 触发命令时自动登记；TG 端也可用 <code class="font-mono">/unsubscribe [name]</code> 解绑。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/subscribers" "列出所有订阅" "" `{"items":[{"id":1,"command_id":1,"bot_id":1,"chat_id":"123","platform":"telegram"}]}`) }}
+          {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/subscribers/{id}" "解绑订阅" "" "204") }}
+        </div>
+      </section>
+
+      {{/* ===== LOGS / DLQ ===== */}}
+      <section id="logs" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Logs / Dead Letters</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">推送结果审计与失败回放。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/logs?channel_id=&page=&per_page=" "推送日志分页" "" `{"items":[...],"total":123}`) }}
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/deadletters?page=&per_page=" "死信队列" "" `{"items":[...],"total":3}`) }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/deadletters/{id}/replay" "重投到 outbox" "" `{"new_outbox_id":456}`) }}
+        </div>
+      </section>
+
+      {{/* ===== INVITES ===== */}}
+      <section id="invites" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">Invites <span class="ml-1 text-[11px] font-medium uppercase tracking-wider text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded ring-1 ring-amber-100">admin only</span></h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">仅 role=admin 可调；单批次 ≤100 / 单 admin 单日 ≤500。</p>
+        </header>
+        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ template "apidoc-row" (mkAPI "GET" "/api/v1/invites" "列本 admin 创建的邀请码" "" `{"items":[{"code":"ABC...","used_at":null,"expires_at":"..."}]}`) }}
+          {{ template "apidoc-row" (mkAPI "POST" "/api/v1/invites" "批量生成" `{"ttl_seconds":86400,"count":5}` `{"codes":["..."]}`) }}
+          {{ template "apidoc-row" (mkAPI "DELETE" "/api/v1/invites/{code}" "撤销未使用的邀请码" "" "204") }}
+        </div>
+      </section>
+
+      {{/* ===== ERRORS ===== */}}
+      <section id="errors" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+        <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">错误响应</h2>
+          <p class="mt-0.5 text-[12.5px] text-slate-500">所有 4xx/5xx 响应统一信封；操作员可凭 <code class="font-mono">request_id</code> 串联 server log。</p>
+        </header>
+        <div class="p-6">
+          <pre class="text-[12px] text-slate-200 bg-slate-900 rounded-lg p-4 font-mono whitespace-pre-wrap">{
+  "error": {
+    "code": "VALIDATION",
+    "message": "code is required",
+    "request_id": "Ade/mQtRzxdaI3-000051"
+  }
+}</pre>
+          <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-[12.5px] text-slate-600 dark:text-slate-400">
+            <div><code class="font-mono text-rose-600">UNAUTHORIZED</code> 401 未登录或 session 过期</div>
+            <div><code class="font-mono text-rose-600">FORBIDDEN</code> 403 admin 权限/CSRF 校验失败</div>
+            <div><code class="font-mono text-rose-600">NOT_FOUND</code> 404 资源不存在或跨租户</div>
+            <div><code class="font-mono text-rose-600">VALIDATION</code> 400 入参校验失败</div>
+            <div><code class="font-mono text-rose-600">RATE_LIMITED</code> 429 IP/账号级限流</div>
+            <div><code class="font-mono text-rose-600">CHANNEL_DISABLED</code> 410 通道已禁用</div>
+            <div><code class="font-mono text-rose-600">CONFLICT</code> 409 唯一约束/重复创建</div>
+            <div><code class="font-mono text-rose-600">INTERNAL</code> 500 服务端错误（看 request_id 排障）</div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+{{ end }}
+
+{{ define "apidoc-row" }}
+<details class="group">
+  <summary class="cursor-pointer list-none px-6 py-3 flex flex-wrap items-center gap-3 hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+    <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide
+      {{ if eq .Method "GET" }}bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100
+      {{ else if eq .Method "POST" }}bg-blue-50 text-blue-700 ring-1 ring-blue-100
+      {{ else if eq .Method "PUT" }}bg-amber-50 text-amber-700 ring-1 ring-amber-100
+      {{ else if eq .Method "DELETE" }}bg-rose-50 text-rose-700 ring-1 ring-rose-100
+      {{ else }}bg-slate-100 text-slate-700{{ end }}">{{ .Method }}</span>
+    <code class="font-mono text-[13px] text-slate-900 dark:text-white">{{ .Path }}</code>
+    <span class="text-[12.5px] text-slate-500 flex-1 min-w-0 truncate">{{ .Summary }}</span>
+    <svg viewBox="0 0 24 24" class="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+  </summary>
+  <div class="px-6 pb-5 pt-1 grid grid-cols-1 lg:grid-cols-2 gap-3 text-[12px]">
+    {{ if .Request }}
+    <div>
+      <div class="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1">请求体</div>
+      <pre class="text-slate-200 bg-slate-900 rounded-md p-3 font-mono whitespace-pre-wrap break-all">{{ .Request }}</pre>
+    </div>
+    {{ end }}
+    {{ if .Response }}
+    <div>
+      <div class="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1">响应</div>
+      <pre class="text-slate-200 bg-slate-900 rounded-md p-3 font-mono whitespace-pre-wrap break-all">{{ .Response }}</pre>
+    </div>
+    {{ end }}
+  </div>
+</details>
+{{ end }}

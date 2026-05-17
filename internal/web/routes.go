@@ -64,6 +64,7 @@ func mountAuthedUI(r chi.Router, deps Deps) {
 		installDLQUIRoutes(sec, deps)
 		installCommandsUIRoutes(sec, deps)
 		installSubscribersUIRoutes(sec, deps)
+		installAPIDocsUIRoutes(sec, deps)
 		sec.Group(func(adm chi.Router) {
 			adm.Use(wmw.RequireAdmin())
 			installInvitesUIRoutes(adm, deps)

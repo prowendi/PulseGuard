@@ -92,9 +92,9 @@
     <form method="POST" action="/ui/templates" class="flex-1 overflow-y-auto p-6 space-y-4" id="tplForm">
       <input type="hidden" name="csrf" value="{{ .CSRF }}">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="psg-float-wrap">
-          <input type="text" id="tn" name="name" required maxlength="64" placeholder="alert-critical" class="psg-float-input">
-          <label for="tn" class="psg-float-label">名称</label>
+        <div>
+          <label for="tn" class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">名称</label>
+          <input type="text" id="tn" name="name" required maxlength="64" placeholder="alert-critical" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
         </div>
         <div>
           <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">parse_mode</label>
@@ -154,9 +154,9 @@
     <form method="POST" action="/ui/templates" class="flex-1 overflow-y-auto p-6 space-y-4">
       <input type="hidden" name="csrf" value="{{ .CSRF }}">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="psg-float-wrap">
-          <input type="text" id="ten" name="name" required maxlength="64" placeholder="alert-critical" class="psg-float-input">
-          <label for="ten" class="psg-float-label">名称</label>
+        <div>
+          <label for="ten" class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">名称</label>
+          <input type="text" id="ten" name="name" required maxlength="64" placeholder="alert-critical" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
         </div>
         <div>
           <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">parse_mode</label>

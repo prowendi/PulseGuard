@@ -119,6 +119,19 @@ type emptyState struct {
 	CTATarget string // e.g. "drawer-new-bot"
 }
 
+// apiDoc is the projection a single REST endpoint card on the API
+// reference page consumes (rendered via {{ template "apidoc-row" }}).
+// Method drives the verb-coloured pill; Request / Response are pre-
+// rendered JSON examples that the template surfaces inside a code
+// block. Empty strings are skipped by the partial.
+type apiDoc struct {
+	Method   string
+	Path     string
+	Summary  string
+	Request  string
+	Response string
+}
+
 // uiFuncs is the helper set available inside HTMX templates.
 var uiFuncs = template.FuncMap{
 	"masked": func(s string) string {
@@ -159,6 +172,9 @@ var uiFuncs = template.FuncMap{
 	},
 	"mkKPI": func(label string, value int, hint, color, icon string) kpiCard {
 		return kpiCard{Label: label, Value: value, Hint: hint, Color: color, Icon: icon}
+	},
+	"mkAPI": func(method, path, summary, request, response string) apiDoc {
+		return apiDoc{Method: method, Path: path, Summary: summary, Request: request, Response: response}
 	},
 	"mkEmpty": func(title, hint, href, label string) emptyState {
 		// CSP-strict shim: legacy callers pass

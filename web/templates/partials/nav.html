@@ -26,6 +26,12 @@
         {{ template "navlink" (mkNavItem . "deadletters" "/ui/deadletters" "死信队列" "M12 9v4m0 4h.01M5.07 19h13.86a2 2 0 0 0 1.74-3l-6.93-12a2 2 0 0 0-3.46 0L3.33 16a2 2 0 0 0 1.74 3z") }}
       </div>
     </div>
+    <div>
+      <div class="px-3 mb-2 text-[10.5px] uppercase tracking-[0.18em] text-slate-500 font-semibold">开发者</div>
+      <div class="space-y-0.5">
+        {{ template "navlink" (mkNavItem . "apidocs" "/ui/apidocs" "API 文档" "M9 12h6m-6 4h6M7 4h10a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-3-2V6a2 2 0 0 1 2-2z") }}
+      </div>
+    </div>
     {{ if eq .Tenant.Role "admin" }}
     <div>
       <div class="px-3 mb-2 text-[10.5px] uppercase tracking-[0.18em] text-slate-500 font-semibold">管理</div>
