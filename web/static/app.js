@@ -179,6 +179,60 @@
           }
           break;
         }
+        case "edit-channel": {
+          // Hydrate the shared channel edit drawer: scalar fields by
+          // name, plus a JSON-encoded bindings array (template_id +
+          // is_default + condition) that we walk to pre-check the
+          // right checkboxes and fill per-template condition inputs.
+          e.preventDefault();
+          var ced = document.getElementById("drawer-edit-ch");
+          if (!ced) return;
+          var cef = ced.querySelector("form");
+          if (cef) {
+            cef.action = "/ui/channels/" + node.getAttribute("data-id") + "/update";
+          }
+          var setChVal = function (sel, v) {
+            var el = ced.querySelector(sel);
+            if (el) el.value = v == null ? "" : v;
+          };
+          setChVal('[name="name"]', node.getAttribute("data-name"));
+          setChVal('[name="chat_id"]', node.getAttribute("data-chat-id"));
+          setChVal('[name="bot_id"]', node.getAttribute("data-bot-id"));
+          setChVal('[name="rate_per_min"]', node.getAttribute("data-rate-per-min"));
+          setChVal('[name="dedup_window_s"]', node.getAttribute("data-dedup-window-s"));
+          var enabledCb = ced.querySelector('[name="enabled"]');
+          if (enabledCb) {
+            enabledCb.checked = node.getAttribute("data-enabled") === "1";
+          }
+          // Reset every binding row first so a previously opened edit
+          // doesn't leak state into the current one.
+          ced.querySelectorAll('[data-edit-tpl-id]').forEach(function (row) {
+            var cb = row.querySelector('input[type="checkbox"]');
+            var cond = row.querySelector('input[name="conditions"]');
+            if (cb) cb.checked = false;
+            if (cond) cond.value = "";
+          });
+          var bindingsRaw = node.getAttribute("data-bindings") || "[]";
+          try {
+            var bindings = JSON.parse(bindingsRaw);
+            if (Array.isArray(bindings)) {
+              bindings.forEach(function (b) {
+                var row = ced.querySelector('[data-edit-tpl-id="' + b.template_id + '"]');
+                if (!row) return;
+                var cb = row.querySelector('input[type="checkbox"]');
+                var cond = row.querySelector('input[name="conditions"]');
+                if (cb) cb.checked = true;
+                if (cond) cond.value = b.condition || "";
+              });
+            }
+          } catch (parseErr) {
+            // swallow — leaving rows unchecked is the safe fallback
+          }
+          if (typeof window.psgOpenDrawer === "function") {
+            window.psgOpenDrawer("drawer-edit-ch");
+          }
+          break;
+        }
         case "edit-bot": {
           // Shared edit-drawer for the bots page. Row carries data-id /
           // -name / -description / -platform. bot_token is intentionally

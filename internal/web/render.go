@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	pulseguard "github.com/wendi/pulseguard"
+	"github.com/wendi/pulseguard/internal/domain"
 )
 
 // templatesFS returns the templates sub-tree of the embedded WebFS.
@@ -207,6 +209,40 @@ var uiFuncs = template.FuncMap{
 			out[i] = h
 		}
 		return out
+	},
+	// channelBindingsJSON serialises a slice of *domain.ChannelTemplate
+	// down to compact JSON for the channels edit drawer. The HTML
+	// attribute escape that html/template applies makes this safe to
+	// embed verbatim in data-bindings="…"; the edit handler in app.js
+	// JSON.parse()s it back to pre-check the right rows / fill the
+	// condition inputs of the edit drawer.
+	"channelBindingsJSON": func(bs []*domain.ChannelTemplate) string {
+		if len(bs) == 0 {
+			return "[]"
+		}
+		type wire struct {
+			TemplateID int64  `json:"template_id"`
+			IsDefault  bool   `json:"is_default"`
+			SortOrder  int    `json:"sort_order"`
+			Condition  string `json:"condition"`
+		}
+		out := make([]wire, 0, len(bs))
+		for _, b := range bs {
+			if b == nil {
+				continue
+			}
+			out = append(out, wire{
+				TemplateID: b.TemplateID,
+				IsDefault:  b.IsDefault,
+				SortOrder:  b.SortOrder,
+				Condition:  b.Condition,
+			})
+		}
+		raw, err := json.Marshal(out)
+		if err != nil {
+			return "[]"
+		}
+		return string(raw)
 	},
 	// successRate counts how many of the recent log slice are "sent".
 	// Returns an integer percentage rounded down. Empty slice → "100"

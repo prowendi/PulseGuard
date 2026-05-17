@@ -48,6 +48,20 @@
                   <svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
                 </button>
                 <div id="ch-menu-{{ .ID }}" data-psg-popover class="hidden absolute right-0 top-full mt-1 w-44 rounded-xl bg-white shadow-lg ring-1 ring-slate-900/5 border border-slate-100 py-1 z-30 dark:bg-slate-900 dark:ring-white/10 dark:border-slate-800">
+                  <button type="button"
+                          data-action="edit-channel"
+                          data-id="{{ .ID }}"
+                          data-name="{{ .Name }}"
+                          data-bot-id="{{ .BotID }}"
+                          data-chat-id="{{ .ChatID }}"
+                          data-rate-per-min="{{ .RatePerMin }}"
+                          data-dedup-window-s="{{ .DedupWindowS }}"
+                          data-enabled="{{ if .Enabled }}1{{ else }}0{{ end }}"
+                          data-bindings="{{ channelBindingsJSON .Templates }}"
+                          class="w-full text-left flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-slate-700 hover:bg-slate-50 transition-colors dark:text-slate-200 dark:hover:bg-slate-800">
+                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                    编辑通道
+                  </button>
                   <form method="POST" action="/ui/channels/{{ .ID }}/rotate-token" class="block">
                     <input type="hidden" name="csrf" value="{{ $csrf }}">
                     <button class="w-full text-left flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-slate-700 hover:bg-slate-50 transition-colors dark:text-slate-200 dark:hover:bg-slate-800">
@@ -140,6 +154,75 @@
           <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
         </button>
         <button type="button" data-action="drawer-close" data-target="drawer-new-ch" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Drawer: 编辑通道（共享，app.js 在点击编辑按钮时填充字段+改 action）====== -->
+<div id="drawer-edit-ch" class="psg-drawer fixed inset-0 z-40 hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-edit-ch-title">
+  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" data-action="drawer-close" data-target="drawer-edit-ch"></div>
+  <div class="psg-drawer-panel absolute top-0 right-0 h-full w-full max-w-md bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col translate-x-full transition-transform duration-300 ease-out dark:bg-slate-900 dark:ring-white/10">
+    <header class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div>
+        <h2 id="drawer-edit-ch-title" class="text-base font-semibold text-slate-900 dark:text-white">编辑通道</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">提交后模板绑定会被新选择覆盖。</p>
+      </div>
+      <button type="button" data-action="drawer-close" data-target="drawer-edit-ch" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
+    </header>
+    <form method="POST" action="/ui/channels" class="flex-1 overflow-y-auto p-6 space-y-4">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div class="psg-float-wrap">
+        <input type="text" id="cen" name="name" required maxlength="64" placeholder="ops-critical" class="psg-float-input">
+        <label for="cen" class="psg-float-label">名称</label>
+      </div>
+      <div class="psg-float-wrap">
+        <input type="text" id="cec" name="chat_id" required placeholder="-100123..." class="psg-float-input font-mono">
+        <label for="cec" class="psg-float-label">Chat ID</label>
+      </div>
+      <div>
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Bot</label>
+        <select name="bot_id" required class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+          <option value="">请选择…</option>
+          {{ range .Bots }}<option value="{{ .ID }}">{{ .Name }} (•••{{ .BotTokenLast4 }})</option>{{ end }}
+        </select>
+      </div>
+      <div>
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">模板与条件</label>
+        <p class="mb-2 text-[11.5px] text-slate-500">勾选要保留/新增的模板，未勾选的将被解绑。</p>
+        <div class="space-y-2">
+          {{ range .Templates }}
+          <div class="flex flex-col gap-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:bg-slate-800/40 dark:border-slate-700" data-edit-tpl-id="{{ .ID }}">
+            <label class="flex items-center gap-2 text-[13px] text-slate-700 dark:text-slate-200">
+              <input type="checkbox" name="template_ids" value="{{ .ID }}" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 dark:bg-slate-900 dark:border-slate-600">
+              <span class="font-semibold">{{ .Name }}</span>
+              <span class="text-[11px] text-slate-400">[{{ .ParseMode }}]</span>
+            </label>
+            <input type="text" name="conditions" maxlength="200" placeholder="如 level eq critical（留空 = 默认）"
+                   class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[12px] font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+          </div>
+          {{ end }}
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="psg-float-wrap">
+          <input type="number" id="cer" name="rate_per_min" min="0" placeholder="60" class="psg-float-input">
+          <label for="cer" class="psg-float-label">Rate /min (0=不限)</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="number" id="ced" name="dedup_window_s" min="0" placeholder="0" class="psg-float-input">
+          <label for="ced" class="psg-float-label">Dedup 秒 (0=禁用)</label>
+        </div>
+      </div>
+      <label class="inline-flex items-center gap-2 text-[13px] text-slate-700 dark:text-slate-200">
+        <input type="checkbox" name="enabled" value="1" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 dark:bg-slate-900 dark:border-slate-600">
+        启用
+      </label>
+      <div class="pt-2 flex items-center gap-2">
+        <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">保存修改</button>
+        <button type="button" data-action="drawer-close" data-target="drawer-edit-ch" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
       </div>
     </form>
   </div>
