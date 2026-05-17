@@ -3,7 +3,7 @@ package store
 import (
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // nowMs returns the current millisecond Unix timestamp from the clock.

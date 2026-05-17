@@ -28,8 +28,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/lark"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/lark"
 )
 
 // larkURLPrefix is the canonical custom-bot webhook host. detectPlatform

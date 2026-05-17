@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // TickerSource produces a periodic notification channel + a stop func.

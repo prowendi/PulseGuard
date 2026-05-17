@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // freshLarkTimestamp returns a current Unix-epoch timestamp string as

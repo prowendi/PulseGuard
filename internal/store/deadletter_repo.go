@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // DeadLetterRepo persists terminally-failed pushes for inspection / replay.

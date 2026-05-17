@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // CommandRepo persists tenant-owned Starlark commands.

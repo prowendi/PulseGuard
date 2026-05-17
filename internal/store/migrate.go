@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 //go:embed migrations/*.sql

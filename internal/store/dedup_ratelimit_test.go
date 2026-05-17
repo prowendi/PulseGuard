@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 func dedupFixture(t *testing.T) (*DedupRepo, *outboxFixture) {

@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/platform"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/platform"
 )
 
 // ErrTokenInvalid signals Telegram returned 401 Unauthorized. The

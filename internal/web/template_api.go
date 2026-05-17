@@ -5,9 +5,9 @@ import (
 	"strings"
 	ttpl "text/template"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/render"
-	wmw "github.com/wendi/pulseguard/internal/web/middleware"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/render"
+	wmw "github.com/prowendi/PulseGuard/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
 )

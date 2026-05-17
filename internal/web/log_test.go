@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // seedLogs inserts n synthetic push_logs for tenantID/channelID with

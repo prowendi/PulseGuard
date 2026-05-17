@@ -12,7 +12,7 @@ package platform
 import (
 	"context"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // Listener is a single bot's event loop. Implementations MUST block in

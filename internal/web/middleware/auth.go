@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wendi/pulseguard/internal/auth"
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/auth"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // CookieSession is the legacy (non-secure) cookie name carrying the

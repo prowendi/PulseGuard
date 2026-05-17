@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/config"
 )
 
 // fakeServer wraps httptest.Server with a customisable response so tests

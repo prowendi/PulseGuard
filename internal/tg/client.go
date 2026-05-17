@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/config"
 )
 
 // Client wraps a *http.Client targeting api.telegram.org. The api base is

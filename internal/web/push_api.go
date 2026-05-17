@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 
 	"github.com/go-chi/chi/v5"
 )

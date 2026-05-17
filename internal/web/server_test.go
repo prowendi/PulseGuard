@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/domain"
-	wmw "github.com/wendi/pulseguard/internal/web/middleware"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	wmw "github.com/prowendi/PulseGuard/internal/web/middleware"
 )
 
 // TestServerHealthz boots NewServer with a minimal Deps bundle and

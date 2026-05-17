@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/store"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/store"
 )
 
 // testFixture wires the auth service with the real SQLite repos so the

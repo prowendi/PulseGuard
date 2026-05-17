@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	wmw "github.com/wendi/pulseguard/internal/web/middleware"
+	wmw "github.com/prowendi/PulseGuard/internal/web/middleware"
 )
 
 // CookieCSRF is the legacy (non-secure) CSRF cookie name. When the

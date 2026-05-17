@@ -3,7 +3,7 @@ package web
 import (
 	"net/http"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // pageData is the shared shell every UI page passes to the templates.

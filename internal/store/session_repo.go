@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // SessionRepo persists authentication sessions in the sessions table.

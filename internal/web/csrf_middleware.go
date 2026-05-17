@@ -3,7 +3,7 @@ package web
 import (
 	"net/http"
 
-	wmw "github.com/wendi/pulseguard/internal/web/middleware"
+	wmw "github.com/prowendi/PulseGuard/internal/web/middleware"
 )
 
 // EnsureCSRFCookie auto-issues a session-bound CSRF token for any

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // TestSilenceRepo_InsertMatchDelete is the V7-3 happy-path: insert a

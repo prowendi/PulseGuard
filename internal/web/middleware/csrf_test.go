@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // mintTestToken duplicates web.mintCSRFToken so middleware tests can

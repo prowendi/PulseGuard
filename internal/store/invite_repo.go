@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // InviteRepo persists invite codes. Lock + Consume are designed to run

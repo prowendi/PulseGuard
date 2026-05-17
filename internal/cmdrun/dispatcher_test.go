@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/platform/telegram"
-	"github.com/wendi/pulseguard/internal/scripting"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/platform/telegram"
+	"github.com/prowendi/PulseGuard/internal/scripting"
 )
 
 // fakeResolver returns a static (cmd, err) pair keyed by name.

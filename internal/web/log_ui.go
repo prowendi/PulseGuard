@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	wmw "github.com/wendi/pulseguard/internal/web/middleware"
+	wmw "github.com/prowendi/PulseGuard/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
 )

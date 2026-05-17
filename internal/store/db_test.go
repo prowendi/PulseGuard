@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // openTestDB opens a temp-file SQLite DB. We avoid :memory: because

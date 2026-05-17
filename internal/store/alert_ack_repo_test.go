@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // ─── AlertAckRepo ────────────────────────────────────────────────────

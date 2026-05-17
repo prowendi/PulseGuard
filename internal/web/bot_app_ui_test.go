@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // TestBotsAPI_CreateLarkAppBot pins the LB7 happy path: an app-mode

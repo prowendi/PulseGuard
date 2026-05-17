@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // inviteSetup inserts an admin tenant + clock and returns repos.

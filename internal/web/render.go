@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	pulseguard "github.com/wendi/pulseguard"
+	pulseguard "github.com/prowendi/PulseGuard"
 )
 
 // templatesFS returns the templates sub-tree of the embedded WebFS.

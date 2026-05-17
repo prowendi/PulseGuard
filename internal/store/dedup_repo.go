@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // DedupRepo implements the per-channel fingerprint window. The dedup_keys

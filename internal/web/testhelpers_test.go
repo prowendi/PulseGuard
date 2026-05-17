@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/auth"
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/pipeline"
-	"github.com/wendi/pulseguard/internal/store"
+	"github.com/prowendi/PulseGuard/internal/auth"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/pipeline"
+	"github.com/prowendi/PulseGuard/internal/store"
 )
 
 // testHarness wires every repo/service against a temp SQLite DB so test

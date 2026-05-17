@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // SilenceRepo persists per-tenant alert silences (V7-3). The repo is

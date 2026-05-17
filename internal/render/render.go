@@ -8,7 +8,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // FuncMap is the set of helper functions exposed to every template. It is

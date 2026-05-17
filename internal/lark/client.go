@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/config"
 )
 
 // webhookPattern guards Send against accidentally hitting unrelated

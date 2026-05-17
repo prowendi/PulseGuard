@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // Dedup is a thin wrapper around domain.DedupRepo + domain.Clock so the

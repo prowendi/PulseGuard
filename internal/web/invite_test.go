@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/auth"
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/auth"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // adminAPIClient registers no one — it logs straight in as the admin

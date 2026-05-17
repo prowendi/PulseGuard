@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // OutboxRepo manages the push_outbox table — the heart of the push

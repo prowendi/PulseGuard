@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // authedAPIClient returns a cookie jar client that has been authenticated

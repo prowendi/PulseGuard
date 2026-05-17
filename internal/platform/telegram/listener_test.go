@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // fakeTG is a scriptable Telegram backend. Each call to /getUpdates

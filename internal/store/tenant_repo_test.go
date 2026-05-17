@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 func fixedClock(t time.Time) domain.Clock { return &domain.FakeClock{T: t} }

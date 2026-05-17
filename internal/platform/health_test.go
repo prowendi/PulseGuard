@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // TestManager_Health_RecordsUpdateDispatchError exercises the V6-2

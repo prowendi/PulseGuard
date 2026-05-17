@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wendi/pulseguard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/config"
 
 	_ "modernc.org/sqlite"
 )

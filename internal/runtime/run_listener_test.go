@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/platform"
-	"github.com/wendi/pulseguard/internal/platform/telegram"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/platform"
+	"github.com/prowendi/PulseGuard/internal/platform/telegram"
 )
 
 // fakeTGServer is a scriptable Telegram backend used for the listener

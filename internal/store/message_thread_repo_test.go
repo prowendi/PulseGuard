@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // V7-2 MessageThreadRepo tests. The fixture chain

@@ -47,9 +47,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/lark"
-	"github.com/wendi/pulseguard/internal/scripting"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/lark"
+	"github.com/prowendi/PulseGuard/internal/scripting"
 )
 
 // MaxLarkEventBodyBytes caps the inbound payload. Lark event bodies

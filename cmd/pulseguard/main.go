@@ -13,9 +13,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/logging"
-	"github.com/wendi/pulseguard/internal/runtime"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/logging"
+	"github.com/prowendi/PulseGuard/internal/runtime"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/wendi/pulseguard
+module github.com/prowendi/PulseGuard
 
 go 1.25.1
 

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/platform/telegram"
-	"github.com/wendi/pulseguard/internal/store"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/platform/telegram"
+	"github.com/prowendi/PulseGuard/internal/store"
 )
 
 // commandCatalogAdapter projects domain.CommandRepo into the narrow

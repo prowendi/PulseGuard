@@ -13,8 +13,8 @@ package runtime
 import (
 	"context"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/tg"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/tg"
 )
 
 // tgSenderAdapter wraps a *tg.Client so it satisfies both the legacy

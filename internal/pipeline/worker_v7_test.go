@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // recordingSenderWithOpts implements domain.SenderWithOpts so the V7-1

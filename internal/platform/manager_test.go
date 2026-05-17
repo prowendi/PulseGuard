@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // fakeListener blocks until ctx is cancelled. Optionally returns a

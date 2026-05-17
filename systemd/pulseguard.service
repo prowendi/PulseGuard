@@ -1,6 +1,6 @@
 [Unit]
 Description=PulseGuard alerting push platform
-Documentation=https://github.com/wendi/pulseguard
+Documentation=https://github.com/prowendi/PulseGuard
 After=network.target
 Wants=network-online.target
 

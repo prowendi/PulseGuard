@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // GenerateInvite creates a new invite code owned by adminID, optionally

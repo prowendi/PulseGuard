@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // seedDLQ inserts n synthetic dead_letters rows for the given channel.

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/condeval"
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/render"
-	"github.com/wendi/pulseguard/internal/tg"
+	"github.com/prowendi/PulseGuard/internal/condeval"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/render"
+	"github.com/prowendi/PulseGuard/internal/tg"
 )
 
 // WorkerDeps groups every collaborator the worker needs to drain the

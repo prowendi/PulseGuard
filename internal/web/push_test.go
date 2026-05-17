@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // seedTenantBotTemplateChannel builds a minimal end-to-end fixture so

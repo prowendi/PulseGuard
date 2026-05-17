@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	wmw "github.com/wendi/pulseguard/internal/web/middleware"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	wmw "github.com/prowendi/PulseGuard/internal/web/middleware"
 )
 
 func TestSessionCookieName_SecurePrefix(t *testing.T) {

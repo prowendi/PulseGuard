@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/lark"
-	"github.com/wendi/pulseguard/internal/tg"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/lark"
+	"github.com/prowendi/PulseGuard/internal/tg"
 )
 
 // captureSender is a domain.SenderWithOpts that records every call into

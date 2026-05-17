@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/config"
 )
 
 // newMigratedDB opens a fresh temp-file SQLite DB and runs all migrations.

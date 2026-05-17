@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 func sessionSetup(t *testing.T) (*SessionRepo, *domain.Tenant, *domain.FakeClock) {

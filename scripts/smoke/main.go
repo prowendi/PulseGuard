@@ -33,8 +33,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/tg"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/tg"
 )
 
 func main() {

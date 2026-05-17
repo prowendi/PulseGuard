@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // seedBotAndTemplate inserts a bot + template owned by tenantID and

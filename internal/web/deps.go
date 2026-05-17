@@ -5,13 +5,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/auth"
-	"github.com/wendi/pulseguard/internal/config"
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/pipeline"
-	"github.com/wendi/pulseguard/internal/platform"
-	"github.com/wendi/pulseguard/internal/scripting"
-	"github.com/wendi/pulseguard/internal/store"
+	"github.com/prowendi/PulseGuard/internal/auth"
+	"github.com/prowendi/PulseGuard/internal/config"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/pipeline"
+	"github.com/prowendi/PulseGuard/internal/platform"
+	"github.com/prowendi/PulseGuard/internal/scripting"
+	"github.com/prowendi/PulseGuard/internal/store"
 )
 
 // Deps is the dependency-injection bundle wired into NewServer. Every

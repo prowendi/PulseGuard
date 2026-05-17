@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wendi/pulseguard/internal/condeval"
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/condeval"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // buildUIBindings is the non-HTTP twin of buildBindings: it validates a

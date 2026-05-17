@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // TestBotRepo_LarkAppRoundtrip verifies the LB1 schema additions plus

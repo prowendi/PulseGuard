@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // outboxFixture extends resourceFixture with an OutboxRepo plus a ready

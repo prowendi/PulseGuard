@@ -6,7 +6,7 @@ package web
 import (
 	"net/http"
 
-	"github.com/wendi/pulseguard/internal/web/middleware"
+	"github.com/prowendi/PulseGuard/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
 	chimid "github.com/go-chi/chi/v5/middleware"

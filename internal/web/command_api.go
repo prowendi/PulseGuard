@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wendi/pulseguard/internal/domain"
-	"github.com/wendi/pulseguard/internal/scripting"
-	wmw "github.com/wendi/pulseguard/internal/web/middleware"
+	"github.com/prowendi/PulseGuard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/scripting"
+	wmw "github.com/prowendi/PulseGuard/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
 )

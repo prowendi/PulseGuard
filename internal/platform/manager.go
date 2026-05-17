@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/prowendi/PulseGuard/internal/domain"
 )
 
 // ErrUnknownPlatform is returned by Start when no Factory matches the
