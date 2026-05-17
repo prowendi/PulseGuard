@@ -66,12 +66,33 @@ func NewManager(logger *slog.Logger, factories ...Factory) *Manager {
 // on) before the new one starts so the active map only ever holds the
 // freshest goroutine. ctx is the parent context — cancelling it tears
 // down every listener the Manager has spawned via this Start call.
+//
+// When bot.Enabled is false Start refuses to spawn (or replace) the
+// goroutine — it only logs at debug level and returns nil. This is the
+// hot path the web /disable endpoint and the 401 auto-disable callback
+// rely on: they SetEnabled(false) in the DB and then ALSO Stop() the
+// running goroutine; a subsequent Start (e.g. a process restart that
+// boots from ListAll) sees Enabled=false and stays out. nil is
+// returned (not an error) because callers treat "bot intentionally
+// paused" as a success path, not a failure to wire up.
 func (m *Manager) Start(ctx context.Context, bot *domain.Bot) error {
 	if bot == nil {
 		return errors.New("platform: bot is nil")
 	}
 	if bot.ID == 0 {
 		return errors.New("platform: bot id is zero")
+	}
+	if !bot.Enabled {
+		// Make sure any stale goroutine for this bot is torn down — a
+		// caller flipping Enabled in the DB and then immediately Start-ing
+		// to "reload" the bot would otherwise leak the prior listener.
+		m.Stop(bot.ID)
+		m.logger.Info("platform: listener skipped (bot disabled)",
+			"bot_id", bot.ID,
+			"tenant_id", bot.TenantID,
+			"platform", bot.Platform,
+			"bot_name", bot.Name)
+		return nil
 	}
 
 	m.mu.Lock()

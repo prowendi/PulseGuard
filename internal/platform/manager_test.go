@@ -122,7 +122,7 @@ func TestManager_StartAndIsRunning(t *testing.T) {
 	mgr := NewManager(quietLogger(), factory)
 	t.Cleanup(mgr.Shutdown)
 
-	bot := &domain.Bot{ID: 1, TenantID: 1, Name: "alpha", Platform: domain.PlatformTelegram}
+	bot := &domain.Bot{ID: 1, TenantID: 1, Name: "alpha", Platform: domain.PlatformTelegram, Enabled: true}
 	if err := mgr.Start(context.Background(), bot); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestManager_StartIdempotentReplacesListener(t *testing.T) {
 	mgr := NewManager(quietLogger(), factory)
 	t.Cleanup(mgr.Shutdown)
 
-	bot := &domain.Bot{ID: 7, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram}
+	bot := &domain.Bot{ID: 7, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram, Enabled: true}
 	if err := mgr.Start(context.Background(), bot); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
@@ -195,8 +195,8 @@ func TestManager_Shutdown(t *testing.T) {
 		},
 	}
 	mgr := NewManager(quietLogger(), factory)
-	_ = mgr.Start(context.Background(), &domain.Bot{ID: 1, TenantID: 1, Name: "a", Platform: domain.PlatformTelegram})
-	_ = mgr.Start(context.Background(), &domain.Bot{ID: 2, TenantID: 1, Name: "b", Platform: domain.PlatformTelegram})
+	_ = mgr.Start(context.Background(), &domain.Bot{ID: 1, TenantID: 1, Name: "a", Platform: domain.PlatformTelegram, Enabled: true})
+	_ = mgr.Start(context.Background(), &domain.Bot{ID: 2, TenantID: 1, Name: "b", Platform: domain.PlatformTelegram, Enabled: true})
 	waitClosed(t, l1.started, "l1 start")
 	waitClosed(t, l2.started, "l2 start")
 
@@ -206,7 +206,7 @@ func TestManager_Shutdown(t *testing.T) {
 	}
 
 	// Subsequent Start returns ErrManagerClosed.
-	err := mgr.Start(context.Background(), &domain.Bot{ID: 3, TenantID: 1, Name: "c", Platform: domain.PlatformTelegram})
+	err := mgr.Start(context.Background(), &domain.Bot{ID: 3, TenantID: 1, Name: "c", Platform: domain.PlatformTelegram, Enabled: true})
 	if !errors.Is(err, ErrManagerClosed) {
 		t.Fatalf("post-shutdown Start err = %v want ErrManagerClosed", err)
 	}
@@ -219,7 +219,7 @@ func TestManager_UnknownPlatformErr(t *testing.T) {
 	mgr := NewManager(quietLogger())
 	t.Cleanup(mgr.Shutdown)
 	err := mgr.Start(context.Background(), &domain.Bot{
-		ID: 1, TenantID: 1, Name: "x", Platform: "discord",
+		ID: 1, TenantID: 1, Name: "x", Platform: "discord", Enabled: true,
 	})
 	if !errors.Is(err, ErrUnknownPlatform) {
 		t.Fatalf("err = %v want ErrUnknownPlatform", err)
@@ -234,7 +234,7 @@ func TestManager_StartValidatesBot(t *testing.T) {
 	if err := mgr.Start(context.Background(), nil); err == nil {
 		t.Fatal("expected error for nil bot")
 	}
-	if err := mgr.Start(context.Background(), &domain.Bot{ID: 0, Platform: domain.PlatformTelegram}); err == nil {
+	if err := mgr.Start(context.Background(), &domain.Bot{ID: 0, Platform: domain.PlatformTelegram, Enabled: true}); err == nil {
 		t.Fatal("expected error for zero bot id")
 	}
 }
@@ -249,7 +249,7 @@ func TestManager_BuildErrorSurfaces(t *testing.T) {
 	t.Cleanup(mgr.Shutdown)
 
 	err := mgr.Start(context.Background(), &domain.Bot{
-		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram,
+		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram, Enabled: true,
 	})
 	if err == nil || !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v want wrapping %v", err, wantErr)
@@ -269,7 +269,7 @@ func TestManager_ListenerErrorCleansUp(t *testing.T) {
 	t.Cleanup(mgr.Shutdown)
 
 	if err := mgr.Start(context.Background(), &domain.Bot{
-		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram,
+		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram, Enabled: true,
 	}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestManager_PanicRecovered(t *testing.T) {
 	t.Cleanup(mgr.Shutdown)
 
 	if err := mgr.Start(context.Background(), &domain.Bot{
-		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram,
+		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram, Enabled: true,
 	}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestManager_ParentContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := mgr.Start(ctx, &domain.Bot{
-		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram,
+		ID: 1, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram, Enabled: true,
 	}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -323,4 +323,58 @@ func TestManager_ParentContextCancel(t *testing.T) {
 
 	cancel() // parent ctx cancel cascades to listener
 	eventually(t, 2*time.Second, func() bool { return !mgr.IsRunning(1) })
+}
+
+func TestManager_StartSkipsDisabledBot(t *testing.T) {
+	// A bot whose Enabled flag is false must NOT cause the factory to
+	// build a listener. The Manager logs and returns nil so callers
+	// treat "intentionally paused" as success.
+	factory := &fakeFactory{platform: domain.PlatformTelegram}
+	mgr := NewManager(quietLogger(), factory)
+	t.Cleanup(mgr.Shutdown)
+
+	err := mgr.Start(context.Background(), &domain.Bot{
+		ID: 1, TenantID: 1, Name: "paused", Platform: domain.PlatformTelegram, Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("Start(disabled) err = %v want nil", err)
+	}
+	if mgr.IsRunning(1) {
+		t.Fatal("IsRunning(1) = true; disabled bot should not have spawned a goroutine")
+	}
+	factory.mu.Lock()
+	built := len(factory.built)
+	factory.mu.Unlock()
+	if built != 0 {
+		t.Fatalf("factory.Build invoked %d times; expected 0 for disabled bot", built)
+	}
+}
+
+func TestManager_StartDisabledTearsDownExisting(t *testing.T) {
+	// Pre-condition: a listener is already running for bot 42. The
+	// operator flips the row to disabled in the DB and re-calls Start
+	// to "reload". The Manager must stop the live goroutine even
+	// though the new spawn is short-circuited.
+	listener := newFakeListener("first")
+	factory := &fakeFactory{
+		platform: domain.PlatformTelegram,
+		supplier: func(*domain.Bot) (Listener, error) { return listener, nil },
+	}
+	mgr := NewManager(quietLogger(), factory)
+	t.Cleanup(mgr.Shutdown)
+
+	bot := &domain.Bot{ID: 42, TenantID: 1, Name: "x", Platform: domain.PlatformTelegram, Enabled: true}
+	if err := mgr.Start(context.Background(), bot); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	waitClosed(t, listener.started, "listener should start")
+	if !mgr.IsRunning(42) {
+		t.Fatal("listener should be running before disable")
+	}
+
+	bot.Enabled = false
+	if err := mgr.Start(context.Background(), bot); err != nil {
+		t.Fatalf("reload-disabled Start: %v", err)
+	}
+	eventually(t, 2*time.Second, func() bool { return !mgr.IsRunning(42) })
 }

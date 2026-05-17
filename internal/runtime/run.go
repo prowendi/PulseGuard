@@ -240,12 +240,23 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	}
 	listenerMgr := platform.NewManager(logger, listenerFactories...)
 
-	// Boot a listener for every bot already in the DB so a process
-	// restart resumes onboarding loops without operator action.
+	// Boot a listener for every enabled bot already in the DB so a
+	// process restart resumes onboarding loops without operator action.
+	// Disabled bots are skipped here (the Manager would also short-
+	// circuit them, but filtering at the loader avoids a stream of
+	// "listener skipped" log lines at boot for tenants that have paused
+	// half their bots).
 	if existing, err := bots.ListAll(ctx); err != nil {
 		logger.Warn("runtime: list bots failed; listeners deferred to CRUD", "err", err.Error())
 	} else {
 		for _, b := range existing {
+			if !b.Enabled {
+				logger.Info("runtime: bot listener boot skipped (disabled)",
+					"bot_id", b.ID,
+					"tenant_id", b.TenantID,
+					"platform", b.Platform)
+				continue
+			}
 			if err := listenerMgr.Start(ctx, b); err != nil {
 				logger.Warn("runtime: bot listener start failed",
 					"bot_id", b.ID,

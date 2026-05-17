@@ -14,12 +14,16 @@ import (
 // botView is the safe-for-wire representation of a bot. The bot_token
 // is NEVER echoed in full; only the last 4 characters are exposed via
 // the masked field so the UI can hint at which key is configured.
+// Enabled mirrors the Bot.Enabled domain flag so the UI can render a
+// distinct "paused" state and the enable/disable buttons stay idempotent
+// (the client checks before issuing the toggle).
 type botView struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	Platform      string `json:"platform"`
 	Description   string `json:"description,omitempty"`
 	BotTokenLast4 string `json:"bot_token_last4"`
+	Enabled       bool   `json:"enabled"`
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
 }
@@ -35,6 +39,7 @@ func toBotView(b *domain.Bot) botView {
 		Platform:      b.Platform,
 		Description:   b.Description,
 		BotTokenLast4: last4,
+		Enabled:       b.Enabled,
 		CreatedAt:     b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:     b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
@@ -60,6 +65,11 @@ func installBotsAPIRoutes(r chi.Router, deps Deps) {
 	r.Get("/bots/{id}", apiBotGet(deps))
 	r.Put("/bots/{id}", apiBotUpdate(deps))
 	r.Delete("/bots/{id}", apiBotDelete(deps))
+	// /enable and /disable are dedicated narrow endpoints so the UI
+	// pause/resume button does not have to PUT the full bot payload
+	// (which would force re-encrypting the token on every toggle).
+	r.Post("/bots/{id}/enable", apiBotEnable(deps))
+	r.Post("/bots/{id}/disable", apiBotDisable(deps))
 }
 
 func apiBotList(deps Deps) http.HandlerFunc {
@@ -211,6 +221,58 @@ func apiBotDelete(deps Deps) http.HandlerFunc {
 		}
 		stopBotListener(deps, id)
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// apiBotEnable flips the bot's enabled flag to true AND restarts the
+// listener so the long-poll loop comes back without the operator
+// touching anything else. The bot is re-read so the listener Start sees
+// the freshly-decrypted token in case it was rotated while paused.
+func apiBotEnable(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathID(w, r, "id")
+		if !ok {
+			return
+		}
+		tenant := wmw.Tenant(r.Context())
+		if err := deps.Bots.SetEnabled(r.Context(), tenant.ID, id, true); err != nil {
+			writeRepoError(w, r, deps, err)
+			return
+		}
+		bot, err := deps.Bots.GetByID(r.Context(), tenant.ID, id)
+		if err != nil {
+			writeRepoError(w, r, deps, err)
+			return
+		}
+		// Force a fresh goroutine — the operator may have toggled the
+		// flag while a stale "skipped" entry was hanging around.
+		restartBotListener(deps, bot)
+		writeJSON(w, http.StatusOK, toBotView(bot))
+	}
+}
+
+// apiBotDisable flips the bot's enabled flag to false AND stops the
+// listener so the long-poll loop drains immediately. The response
+// echoes the freshly-disabled view so the UI can update without a
+// follow-up GET.
+func apiBotDisable(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parsePathID(w, r, "id")
+		if !ok {
+			return
+		}
+		tenant := wmw.Tenant(r.Context())
+		if err := deps.Bots.SetEnabled(r.Context(), tenant.ID, id, false); err != nil {
+			writeRepoError(w, r, deps, err)
+			return
+		}
+		stopBotListener(deps, id)
+		bot, err := deps.Bots.GetByID(r.Context(), tenant.ID, id)
+		if err != nil {
+			writeRepoError(w, r, deps, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, toBotView(bot))
 	}
 }
 

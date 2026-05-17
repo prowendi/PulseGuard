@@ -380,3 +380,167 @@ func TestUIBotsCreateShowsFlashHint(t *testing.T) {
 func strInt64(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
+
+// TestBotsAPI_EnableDisableLifecycle exercises the dedicated
+// /bots/{id}/enable + /disable endpoints. The created bot starts
+// enabled (default-on insert path covered in store tests). After
+// disable the view echoes enabled=false; after re-enable it flips
+// back. With no BotListeners wired into the harness deps, the
+// listener Start/Stop calls become no-ops — they're exercised at the
+// platform layer in manager_test.go.
+func TestBotsAPI_EnableDisableLifecycle(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	// Create a bot. It must come back enabled by default.
+	createBody := mustJSON(t, map[string]any{
+		"name":      "tog-bot",
+		"bot_token": "12345:AAAabcXYZ_-1234",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(createBody))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	var created botView
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if !created.Enabled {
+		t.Fatalf("freshly-created bot enabled = false (want true)")
+	}
+
+	// Disable.
+	req, _ = http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots/"+strInt64(created.ID)+"/disable"), nil)
+	resp, err = client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("disable status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	var disabled botView
+	_ = json.NewDecoder(resp.Body).Decode(&disabled)
+	resp.Body.Close()
+	if disabled.Enabled {
+		t.Fatalf("after /disable enabled = true (want false)")
+	}
+	if disabled.ID != created.ID {
+		t.Fatalf("disable returned wrong id %d want %d", disabled.ID, created.ID)
+	}
+
+	// GET reflects the persisted state.
+	resp, err = client.Get(h.fullURL("/api/v1/bots/" + strInt64(created.ID)))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var fetched botView
+	_ = json.NewDecoder(resp.Body).Decode(&fetched)
+	resp.Body.Close()
+	if fetched.Enabled {
+		t.Fatalf("GET after disable still reports enabled = true")
+	}
+
+	// Re-enable.
+	req, _ = http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots/"+strInt64(created.ID)+"/enable"), nil)
+	resp, err = client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("enable status = %d body=%s", resp.StatusCode, drain(resp))
+	}
+	var enabled botView
+	_ = json.NewDecoder(resp.Body).Decode(&enabled)
+	resp.Body.Close()
+	if !enabled.Enabled {
+		t.Fatalf("after /enable enabled = false (want true)")
+	}
+}
+
+func TestBotsAPI_DisableRequiresCSRF(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	// Seed a bot via API so the row exists.
+	body := mustJSON(t, map[string]any{
+		"name":      "needs-csrf",
+		"bot_token": "12345:AAAabcXYZ_-1234",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots"), bytes.NewReader(body))
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var created botView
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+
+	req, _ = http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots/"+strInt64(created.ID)+"/disable"), nil)
+	// Intentionally no X-CSRF-Token.
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d want 403", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestBotsAPI_DisableUnknownIsNotFound(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV1")
+
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots/9999/disable"), nil)
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestBotsAPI_DisableCrossTenantIsNotFound(t *testing.T) {
+	h := newTestHarness(t)
+	_, _ = h.seedAdmin("admin@example.com", "adminpass", "INV1")
+
+	// Seed another tenant's bot directly via repo.
+	other := &domain.Tenant{
+		Email: "other@example.com", PasswordHash: "x",
+		Role: domain.RoleUser, Status: domain.TenantActive,
+	}
+	_ = h.deps.Tenants.Insert(context.Background(), other)
+	otherBot := &domain.Bot{TenantID: other.ID, Name: "x", BotToken: "12345:Z"}
+	_ = h.deps.Bots.Insert(context.Background(), otherBot)
+
+	inv2 := &domain.InviteCode{Code: "INV2", CreatedBy: other.ID}
+	_ = h.deps.Invites.Insert(context.Background(), inv2)
+	client, csrf := registerTenantAPI(t, h, "alice@example.com", "alicepass", "INV2")
+
+	req, _ := http.NewRequest(http.MethodPost, h.fullURL("/api/v1/bots/"+strInt64(otherBot.ID)+"/disable"), nil)
+	resp, err := client.Do(withCSRF(req, csrf))
+	if err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-tenant disable status = %d want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// And the other tenant's bot stays enabled.
+	got, err := h.deps.Bots.GetByID(context.Background(), other.ID, otherBot.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.Enabled {
+		t.Fatalf("cross-tenant disable mutated victim row")
+	}
+}
