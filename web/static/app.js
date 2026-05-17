@@ -81,7 +81,7 @@
     pop.style.top = (rect.bottom + 4) + "px";
     pop.style.right = right + "px";
     pop.style.left = "";
-    pop.style.zIndex = "60";
+    pop.style.zIndex = "40";
   }
 
   function clearPopoverFixed(pop) {
@@ -168,6 +168,16 @@
       if (!node) return;
       var action = node.getAttribute("data-action");
       if (!action) return;
+      // Any edit-* action opens a drawer; close every row-level popover
+      // first so the dropdown menu does not float on top of the editor
+      // (and so we don't leak fixed-positioned children into <body>).
+      if (action.indexOf("edit-") === 0) {
+        document.querySelectorAll("[data-psg-popover]").forEach(function (pop) {
+          if (pop.classList.contains("hidden")) return;
+          pop.classList.add("hidden");
+          clearPopoverFixed(pop);
+        });
+      }
       switch (action) {
         case "drawer-open": {
           e.preventDefault();
