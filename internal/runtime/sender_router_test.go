@@ -61,6 +61,35 @@ func (c *captureSender) snapshot() (int, int, int) {
 // canonicalLarkWebhook always passes the lark.webhookPattern.
 const canonicalLarkWebhook = "https://open.feishu.cn/open-apis/bot/v2/hook/0123456789abcdef0123456789abcdef"
 
+// canonicalLarkApp is the lark-app:// pseudo-URL the store layer
+// emits for application-bot rows. ParseAppToken accepts it and the
+// router must dispatch it to AppClient, not the webhook Client.
+const canonicalLarkApp = "lark-app://cli_test_app?secret=test-secret"
+
+// newTestAppClient builds an AppClient pointed at an unreachable host
+// so any router miss-route surfaces as a *lark.APIError (Transient,
+// network error). The OAuth call would hit canonicalAPIBase by
+// default; we redirect via the package-private newAppClientWithBase
+// indirectly: tests in this package live alongside the lark package
+// only through public types, so we use NewAppClient with a stub
+// TokenSource that returns a fixed bearer. The IM endpoint then
+// fails the canonical host so the test can detect the routing path
+// by inspecting the error type.
+func newTestAppClient(timeout time.Duration) *lark.AppClient {
+	return lark.NewAppClient(stubTokenSource{tok: "t-test"}, timeout)
+}
+
+// stubTokenSource always returns the configured token, never hits the
+// network. Used in router tests so the canonical Lark host is the
+// only reachable failure point for the IM POST.
+type stubTokenSource struct{ tok string }
+
+func (s stubTokenSource) Token(_ context.Context, appID, appSecret string) (string, error) {
+	_ = appID
+	_ = appSecret
+	return s.tok, nil
+}
+
 func TestDetectPlatform(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -74,6 +103,9 @@ func TestDetectPlatform(t *testing.T) {
 		{"https://open.feishu.cn/open-apis/bot/v2/hook/anything", domain.PlatformLark},
 		// case-sensitive: mixed-case host stays telegram
 		{"https://Open.Feishu.cn/open-apis/bot/v2/hook/x", domain.PlatformTelegram},
+		// lark-app:// goes to its own bucket (NOT the webhook bucket).
+		{canonicalLarkApp, platformLarkApp},
+		{"lark-app://cli_x?secret=s", platformLarkApp},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -95,8 +127,9 @@ func TestRouterSendRoutesTelegram(t *testing.T) {
 	// (which is unreachable in the test env) and return a network
 	// error — surfacing the bug as a non-nil error here.
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
+	appC := newTestAppClient(500 * time.Millisecond)
 
-	r := newSenderRouter(cs, larkC)
+	r := newSenderRouter(cs, larkC, appC)
 
 	msgID, err := r.Send(context.Background(), "12345:tg-token", "chat-1", "MarkdownV2", "hi")
 	if err != nil {
@@ -122,7 +155,8 @@ func TestRouterSendRoutesTelegram(t *testing.T) {
 func TestRouterSendRoutesLark(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
-	r := newSenderRouter(cs, larkC)
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC)
 
 	_, err := r.Send(context.Background(), canonicalLarkWebhook, "ignored", "ignored", "hi from lark")
 	if err == nil {
@@ -137,6 +171,29 @@ func TestRouterSendRoutesLark(t *testing.T) {
 	}
 }
 
+// TestRouterSendRoutesLarkApp pins the LB4 contract: a lark-app://
+// token must dispatch to the AppClient (which hits the canonical
+// host and produces a *lark.APIError on network failure), NOT the
+// webhook client and NOT the telegram capture.
+func TestRouterSendRoutesLarkApp(t *testing.T) {
+	cs := &captureSender{}
+	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC)
+
+	_, err := r.Send(context.Background(), canonicalLarkApp, "oc_chat", "MarkdownV2", "hi from app")
+	if err == nil {
+		t.Fatalf("expected network error from canonical lark host")
+	}
+	if _, isLarkErr := lark.AsAPIError(err); !isLarkErr {
+		t.Fatalf("expected *lark.APIError from app client, got %T %v", err, err)
+	}
+	sends, _, _ := cs.snapshot()
+	if sends != 0 {
+		t.Fatalf("telegram sender must NOT see lark-app tokens, got %d sends", sends)
+	}
+}
+
 // TestRouterSendWithOptsLarkDropsButtons confirms inline-keyboard
 // buttons are silently dropped on the Lark side (Lark webhooks have
 // no inline_keyboard analogue per L2 design). The Telegram side
@@ -144,7 +201,8 @@ func TestRouterSendRoutesLark(t *testing.T) {
 func TestRouterSendWithOptsTelegramPreservesButtons(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
-	r := newSenderRouter(cs, larkC)
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC)
 
 	opts := domain.SendOptions{
 		Buttons: []domain.PushButton{{Text: "ACK", Callback: "ack:abc"}},
@@ -170,7 +228,8 @@ func TestRouterSendWithOptsTelegramPreservesButtons(t *testing.T) {
 func TestRouterEditMessageLarkRoutesToLark(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
-	r := newSenderRouter(cs, larkC)
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC)
 
 	err := r.EditMessage(context.Background(), canonicalLarkWebhook, "chat", 42, "", "edited")
 	if err == nil {
@@ -185,13 +244,36 @@ func TestRouterEditMessageLarkRoutesToLark(t *testing.T) {
 	}
 }
 
+// TestRouterEditMessageLarkAppFallsBackToSend confirms that the
+// lark-app:// route's EditMessage also degrades to a fresh Send via
+// AppClient (no message_threads compatibility today).
+func TestRouterEditMessageLarkAppFallsBackToSend(t *testing.T) {
+	cs := &captureSender{}
+	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC)
+
+	err := r.EditMessage(context.Background(), canonicalLarkApp, "oc", 42, "", "edited")
+	if err == nil {
+		t.Fatalf("expected network error from canonical host, got nil")
+	}
+	if _, isLarkErr := lark.AsAPIError(err); !isLarkErr {
+		t.Fatalf("expected *lark.APIError, got %T %v", err, err)
+	}
+	_, _, edits := cs.snapshot()
+	if edits != 0 {
+		t.Fatalf("telegram EditMessage must not be invoked for lark-app tokens, got %d", edits)
+	}
+}
+
 // TestRouterEditMessageTelegramRoutesToEdit pins the happy-path edit
 // behaviour for Telegram tokens: the router invokes the underlying
 // SenderWithOpts.EditMessage, NOT a fresh Send.
 func TestRouterEditMessageTelegramRoutesToEdit(t *testing.T) {
 	cs := &captureSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
-	r := newSenderRouter(cs, larkC)
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(cs, larkC, appC)
 
 	if err := r.EditMessage(context.Background(), "12345:tok", "chat", 99, "", "edit"); err != nil {
 		t.Fatalf("EditMessage err = %v", err)
@@ -215,7 +297,8 @@ func TestRouterEditMessageTelegramRoutesToEdit(t *testing.T) {
 func TestRouterFallbackWhenTGSenderLacksOpts(t *testing.T) {
 	plain := &plainSender{}
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
-	r := newSenderRouter(plain, larkC)
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(plain, larkC, appC)
 
 	if _, err := r.SendWithOpts(context.Background(), "12345:tok", "c", "", "x", domain.SendOptions{Buttons: []domain.PushButton{{Text: "ack"}}}); err != nil {
 		t.Fatalf("SendWithOpts err = %v", err)
@@ -250,7 +333,8 @@ func TestRouterRoundTripWithRealTelegramHTTPTest(t *testing.T) {
 
 	tgClient := tg.New(config.Telegram{APIBase: tgSrv.URL, HTTPTimeout: config.Duration(2 * time.Second)})
 	larkC := lark.New(config.Telegram{HTTPTimeout: config.Duration(500 * time.Millisecond)})
-	r := newSenderRouter(newTGSenderAdapter(tgClient), larkC)
+	appC := newTestAppClient(500 * time.Millisecond)
+	r := newSenderRouter(newTGSenderAdapter(tgClient), larkC, appC)
 
 	msgID, err := r.SendWithOpts(context.Background(), "12345:tg", "chat-1", "MarkdownV2", "real call", domain.SendOptions{
 		Buttons: []domain.PushButton{{Text: "ACK", Callback: "ack:fp"}},

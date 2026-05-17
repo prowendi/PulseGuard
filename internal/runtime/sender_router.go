@@ -1,13 +1,18 @@
 // Package runtime — sender_router multiplexes the worker's single
 // domain.Sender dependency across multiple chat-platform clients
-// (Telegram + Lark / 飞书 today; pluggable for Discord / Slack / WeChat
-// once their outbound clients land).
+// (Telegram + Lark / 飞书 webhook + Lark application bot today;
+// pluggable for Discord / Slack / WeChat once their outbound clients
+// land).
 //
 // Detection happens on the BotToken value the worker passes through
 // from domain.Bot, NOT on bot.Platform. The router does not see the
 // Bot row — it sees only the wire-level credentials the worker hands
 // to Sender.Send. The chosen heuristic is a prefix test:
 //
+//   - "lark-app://" → Lark application bot → routed to lark.AppClient.
+//     The store layer assembles this pseudo-URL from the app_id +
+//     plaintext app_secret on read; the worker never knows it's
+//     dealing with anything other than a token string.
 //   - "https://open.feishu.cn/" → Lark webhook URL → routed to lark.Client.
 //   - anything else (including the standard "<bot-id>:<secret>" shape)
 //     → routed to the Telegram adapter.
@@ -34,59 +39,85 @@ import (
 // "bot token is not valid" instead of mis-routing to Lark).
 const larkURLPrefix = "https://open.feishu.cn/"
 
+// platformLarkApp is an internal marker returned by detectPlatform when
+// the token shape matches the lark-app:// pseudo-URL the store layer
+// emits for application-bot rows. Distinct from domain.PlatformLark
+// (which covers both webhook and app rows) because the router needs
+// to dispatch to lark.AppClient vs lark.Client based on the wire
+// shape alone — bot.BotKind is not visible here.
+const platformLarkApp = "lark-app"
+
 // senderRouter is the multi-platform dispatcher. tg is the existing
-// telegram adapter (SenderWithOpts capable); larkClient is the new
-// Lark client. Both fields are required at construction time — there
-// is no nil-fallback because a bot row carrying the "wrong" platform
-// for a nil client should fail loudly rather than silently send
-// nowhere.
+// telegram adapter (SenderWithOpts capable); larkWebhook handles the
+// Phase A custom-bot webhook; larkApp handles the Phase B application
+// bot (OAuth2 + IM API). All three fields are required at construction
+// time — there is no nil-fallback because a bot row carrying the
+// "wrong" platform for a nil client should fail loudly rather than
+// silently send nowhere.
 type senderRouter struct {
-	tg   domain.Sender
-	lark *lark.Client
+	tg          domain.Sender
+	larkWebhook *lark.Client
+	larkApp     *lark.AppClient
 }
 
-// newSenderRouter wires the two underlying clients. Pass the existing
-// *tgSenderAdapter (or any domain.Sender for tests) as tg, and a
-// *lark.Client as larkClient. The returned value satisfies BOTH
-// domain.Sender AND domain.SenderWithOpts, so the worker's type
-// assertion for SendWithOpts / EditMessage continues to work
-// transparently when the routed token is a Telegram one.
-func newSenderRouter(tg domain.Sender, larkClient *lark.Client) *senderRouter {
-	return &senderRouter{tg: tg, lark: larkClient}
+// newSenderRouter wires the three underlying clients. Pass the existing
+// *tgSenderAdapter (or any domain.Sender for tests) as tg, a
+// *lark.Client as larkWebhook, and a *lark.AppClient as larkApp. The
+// returned value satisfies BOTH domain.Sender AND domain.SenderWithOpts,
+// so the worker's type assertion for SendWithOpts / EditMessage
+// continues to work transparently when the routed token is a Telegram
+// one.
+func newSenderRouter(tg domain.Sender, larkWebhook *lark.Client, larkApp *lark.AppClient) *senderRouter {
+	return &senderRouter{tg: tg, larkWebhook: larkWebhook, larkApp: larkApp}
 }
 
 // detectPlatform classifies a bot token. Exported only via the
 // router's behaviour so tests can pin the contract without locking
-// the symbol publicly.
+// the symbol publicly. Order matters: the lark-app:// check runs
+// before the https:// check so an https-shaped query value embedded
+// in the lark-app URL cannot accidentally trip the webhook branch
+// (theoretical, but cheap to be defensive).
 func detectPlatform(botToken string) string {
+	if strings.HasPrefix(botToken, lark.LarkAppTokenPrefix) {
+		return platformLarkApp
+	}
 	if strings.HasPrefix(botToken, larkURLPrefix) {
 		return domain.PlatformLark
 	}
 	return domain.PlatformTelegram
 }
 
-// Send routes by token prefix. Lark tokens go to the lark.Client (chat
-// and parseMode arguments are ignored by Lark but forwarded for shape
-// uniformity); everything else goes to the Telegram adapter.
+// Send routes by token prefix. Lark tokens go to the appropriate Lark
+// client (chat and parseMode arguments are accepted but ignored for
+// webhook bots — the chat is bound to the webhook URL itself);
+// everything else goes to the Telegram adapter.
 func (r *senderRouter) Send(ctx context.Context, botToken, chatID, parseMode, text string) (int64, error) {
-	if detectPlatform(botToken) == domain.PlatformLark {
-		return r.lark.Send(ctx, botToken, chatID, parseMode, text)
+	switch detectPlatform(botToken) {
+	case platformLarkApp:
+		return r.larkApp.Send(ctx, botToken, chatID, parseMode, text)
+	case domain.PlatformLark:
+		return r.larkWebhook.Send(ctx, botToken, chatID, parseMode, text)
+	default:
+		return r.tg.Send(ctx, botToken, chatID, parseMode, text)
 	}
-	return r.tg.Send(ctx, botToken, chatID, parseMode, text)
 }
 
 // SendWithOpts is the buttons-aware path. Telegram messages keep
 // their inline_keyboard support via the underlying SenderWithOpts
 // adapter (the router type-asserts at dispatch time). For Lark the
-// buttons are silently dropped — custom-bot webhooks have no
-// inline_keyboard analogue — so we route to the plain Send. The
-// worker is already prepared for "buttons silently dropped" in tests
-// where the injected sender lacks SenderWithOpts; the same
-// degradation applies here, intentionally, for Lark.
+// buttons are silently dropped — neither the custom-bot webhook nor
+// the application IM API expose an inline_keyboard analogue — so we
+// route to the plain Send. The worker is already prepared for
+// "buttons silently dropped" in tests where the injected sender lacks
+// SenderWithOpts; the same degradation applies here, intentionally,
+// for Lark.
 func (r *senderRouter) SendWithOpts(ctx context.Context, botToken, chatID, parseMode, text string, opts domain.SendOptions) (int64, error) {
-	if detectPlatform(botToken) == domain.PlatformLark {
-		// Lark has no inline_keyboard. Drop buttons and forward.
-		return r.lark.Send(ctx, botToken, chatID, parseMode, text)
+	switch detectPlatform(botToken) {
+	case platformLarkApp:
+		// Lark IM API has no inline_keyboard. Drop buttons and forward.
+		return r.larkApp.Send(ctx, botToken, chatID, parseMode, text)
+	case domain.PlatformLark:
+		return r.larkWebhook.Send(ctx, botToken, chatID, parseMode, text)
 	}
 	if sw, ok := r.tg.(domain.SenderWithOpts); ok {
 		return sw.SendWithOpts(ctx, botToken, chatID, parseMode, text, opts)
@@ -95,13 +126,20 @@ func (r *senderRouter) SendWithOpts(ctx context.Context, botToken, chatID, parse
 }
 
 // EditMessage is the V7-2 state-machine collapse path. Telegram
-// rewrites the existing message in place; Lark falls back to a fresh
-// Send (lark.Client.Edit already implements that fallback, but we go
-// through Send here to keep the router's call graph flat and the
-// degradation explicit).
+// rewrites the existing message in place; Lark (both webhook and
+// app modes) falls back to a fresh Send because neither client has
+// a meaningful editMessageText analogue in the current wire-up.
+// The lark.AppClient.Edit method exists for interface completeness
+// but its messageID==0 fallback delegates to Send anyway, and
+// message_threads stores int64s incompatible with Lark's opaque
+// "om_..." message_id strings.
 func (r *senderRouter) EditMessage(ctx context.Context, botToken, chatID string, messageID int64, parseMode, text string) error {
-	if detectPlatform(botToken) == domain.PlatformLark {
-		_, err := r.lark.Send(ctx, botToken, chatID, parseMode, text)
+	switch detectPlatform(botToken) {
+	case platformLarkApp:
+		_, err := r.larkApp.Send(ctx, botToken, chatID, parseMode, text)
+		return err
+	case domain.PlatformLark:
+		_, err := r.larkWebhook.Send(ctx, botToken, chatID, parseMode, text)
 		return err
 	}
 	if sw, ok := r.tg.(domain.SenderWithOpts); ok {

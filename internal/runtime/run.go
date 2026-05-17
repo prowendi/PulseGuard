@@ -138,15 +138,26 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	messageThreads := store.NewMessageThreadRepo(db, clock)
 	silences := store.NewSilenceRepo(db, clock)
 
-	// ── 4. Sender (telegram + lark, multiplexed by token prefix). The
-	// router carries both adapters and dispatches based on the bot
-	// token shape the worker hands it at call time. Existing tests
-	// inject ov.Sender to bypass the network entirely — that override
-	// short-circuits the router so the test sender sees every call
-	// regardless of platform.
+	// ── 4. Sender (telegram + lark webhook + lark application bot,
+	// multiplexed by token prefix). The router carries three adapters
+	// and dispatches based on the bot token shape the worker hands it
+	// at call time. Existing tests inject ov.Sender to bypass the
+	// network entirely — that override short-circuits the router so
+	// the test sender sees every call regardless of platform.
+	//
+	// OAuth and AppClient share the same HTTP timeout as the webhook
+	// client (cfg.Telegram.HTTPTimeout) so behaviour is uniform across
+	// platforms without inventing a dedicated cfg.Lark struct.
+	larkTimeout := cfg.Telegram.HTTPTimeout.Std()
+	if larkTimeout <= 0 {
+		larkTimeout = 10 * time.Second
+	}
+	larkOAuth := lark.NewOAuthClient(larkTimeout)
+	larkAppClient := lark.NewAppClient(larkOAuth, larkTimeout)
 	var sender domain.Sender = newSenderRouter(
 		newTGSenderAdapter(tg.New(cfg.Telegram)),
 		lark.New(cfg.Telegram),
+		larkAppClient,
 	)
 	if ov.Sender != nil {
 		sender = ov.Sender
