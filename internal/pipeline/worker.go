@@ -33,6 +33,13 @@ type WorkerDeps struct {
 	// absent the worker degrades to vanilla Send so legacy fixtures
 	// (and the simple unit tests that pre-date V7-2) keep working.
 	MessageThreads domain.MessageThreadRepo
+	// Silences, when non-nil, gates the outbound Send/Edit on a
+	// prefix match against the tenant's active silence rules (V7-3).
+	// When a payload's `_fingerprint` matches an active silence, the
+	// outbox row is MarkSent + LogSilenced, and the Sender is never
+	// called. nil-safe: tests without a silence dependency see no
+	// behaviour change.
+	Silences domain.SilenceRepo
 	// Logger receives structured records for every claim/sent/retry/dead
 	// branch. Nil is acceptable — a noop logger writing to io.Discard is
 	// substituted so call sites never need to nil-check.
@@ -220,6 +227,29 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	// in place. Everything else falls through to Send and (on success)
 	// stamps a fresh thread row so the next push edits this one.
 	fingerprint := extractFingerprint(payload)
+
+	// V7-3: gate every outbound push on the tenant's active silence
+	// rules. The check runs BEFORE the V7-2 edit lookup so a silenced
+	// alert never edits its previous message — the operator silenced
+	// it precisely because they want the chat quiet, not "quietly
+	// rewritten". Failures here fall through (alert ships normally)
+	// because a transient SQL hiccup must not stop a legitimate
+	// notification.
+	if fingerprint != "" && w.deps.Silences != nil {
+		matched, sErr := w.deps.Silences.Match(ctx, item.TenantID, fingerprint, w.deps.Clock.Now())
+		if sErr != nil {
+			w.deps.Logger.Warn("pipeline.worker silence lookup failed; sending anyway",
+				"worker_id", w.cfg.WorkerID,
+				"outbox_id", item.ID,
+				"channel_id", item.ChannelID,
+				"fingerprint", fingerprint,
+				"err", sErr.Error())
+		} else if matched {
+			w.markSilenced(ctx, item, text, fingerprint)
+			return true, nil
+		}
+	}
+
 	if fingerprint != "" && w.deps.MessageThreads != nil {
 		if existing, lookupErr := w.deps.MessageThreads.GetByFingerprint(ctx, ch.ID, fingerprint); lookupErr == nil && existing != nil {
 			if sw, ok := w.deps.Sender.(domain.SenderWithOpts); ok {
@@ -376,6 +406,48 @@ func (w *Worker) markRetryOrDead(ctx context.Context, item *domain.PushOutbox, r
 		"attempts", item.Attempts,
 		"next_attempt_at", next.UTC().Format(time.RFC3339),
 		"reason", sendErr.Error())
+}
+
+// markSilenced is the V7-3 terminal path: the push matched an active
+// silence rule, so we MarkSent the outbox row (work is done) and log
+// the terminal event with status=silenced for the audit trail. The
+// Sender is NEVER called and no message_thread bookkeeping happens —
+// the silence is total.
+//
+// Render failures cannot reach this path (silence is checked AFTER
+// render succeeds) so the LogSilenced row always carries a useful
+// rendered text for the operator's later audit.
+func (w *Worker) markSilenced(ctx context.Context, item *domain.PushOutbox, rendered, fingerprint string) {
+	log := &domain.PushLog{
+		OutboxID:     &item.ID,
+		ChannelID:    item.ChannelID,
+		TenantID:     item.TenantID,
+		PayloadJSON:  item.PayloadJSON,
+		RenderedText: rendered,
+		Status:       domain.LogSilenced,
+		Attempts:     item.Attempts,
+	}
+	if err := w.deps.Logs.Insert(ctx, log); err != nil {
+		w.deps.Logger.Warn("pipeline.worker insert silenced log failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+	}
+	if err := w.deps.Outbox.MarkSent(ctx, item.ID, w.deps.Clock.Now()); err != nil {
+		w.deps.Logger.Error("pipeline.worker mark sent (after silence) failed",
+			"worker_id", w.cfg.WorkerID,
+			"outbox_id", item.ID,
+			"channel_id", item.ChannelID,
+			"err", err.Error())
+		return
+	}
+	w.deps.Logger.Info("pipeline.worker silenced",
+		"worker_id", w.cfg.WorkerID,
+		"outbox_id", item.ID,
+		"channel_id", item.ChannelID,
+		"attempts", item.Attempts,
+		"fingerprint", fingerprint)
 }
 
 // markEdited is the V7-2 sibling of markSent. The push collapsed into

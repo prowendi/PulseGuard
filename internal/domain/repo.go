@@ -224,3 +224,25 @@ type MessageThreadRepo interface {
 	GetByFingerprint(ctx context.Context, channelID int64, fingerprint string) (*MessageThread, error)
 	DeleteByChannel(ctx context.Context, tenantID, channelID int64) error
 }
+
+// SilenceRepo manages tenant-scoped silence rules driven by the V7-3
+// Telegram /silence built-in. Match is the hot-path call: the worker
+// invokes it per push before any Sender activity to decide whether to
+// suppress the alert.
+//
+// Match's semantics: returns true when ANY active (now <= expires_at)
+// silence row for the tenant has a Pattern that is a non-empty prefix
+// of the supplied fingerprint. Empty patterns are ignored at insert
+// time so they cannot create a "silence everything forever" footgun
+// without explicit operator intent — the implementation rejects
+// empty/whitespace patterns at Insert.
+type SilenceRepo interface {
+	Insert(ctx context.Context, s *Silence) error
+	ListActive(ctx context.Context, tenantID int64, now time.Time) ([]*Silence, error)
+	Delete(ctx context.Context, tenantID, id int64) error
+	// DeleteByPattern removes every active silence row whose pattern
+	// matches the supplied string exactly. Returns the number of
+	// affected rows so /unsilence can craft a helpful reply.
+	DeleteByPattern(ctx context.Context, tenantID int64, pattern string) (int64, error)
+	Match(ctx context.Context, tenantID int64, fingerprint string, now time.Time) (bool, error)
+}

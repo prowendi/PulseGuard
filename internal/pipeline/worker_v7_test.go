@@ -264,3 +264,111 @@ func TestExtractFingerprint(t *testing.T) {
 		})
 	}
 }
+
+// =====================================================================
+// V7-3 silence engine
+// =====================================================================
+
+// TestWorkerV73SilenceMatchSuppressesSend: insert a silence with
+// prefix "db01"; push a payload carrying `_fingerprint=db01-cpu-high`.
+// The worker MUST NOT call the Sender, MUST mark the row sent, and
+// MUST log a `silenced` row so the audit trail captures the suppression.
+func TestWorkerV73SilenceMatchSuppressesSend(t *testing.T) {
+	sender := &fakeSender{resp: func(int) (int64, error) { return 1, nil }}
+	f := newWorkerFixture(t, sender, true)
+	if err := f.silences.Insert(context.Background(), &domain.Silence{
+		TenantID:  1,
+		Pattern:   "db01",
+		CreatedBy: "@op",
+		ExpiresAt: f.clk.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed silence: %v", err)
+	}
+	_ = f.enqueueWithPayload(t, `{"name":"x","_fingerprint":"db01-cpu-high"}`)
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if sender.calls != 0 || sender.editCalls != 0 {
+		t.Fatalf("silence must suppress Sender: calls=%d edits=%d", sender.calls, sender.editCalls)
+	}
+	if got := f.outbox.get(1); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q want sent (silence terminates the row)", got.Status)
+	}
+	if len(f.logs.logs) != 1 {
+		t.Fatalf("logs len = %d, want 1", len(f.logs.logs))
+	}
+	if f.logs.logs[0].Status != domain.LogSilenced {
+		t.Fatalf("log status = %q want %q", f.logs.logs[0].Status, domain.LogSilenced)
+	}
+	if f.threads.count() != 0 {
+		t.Fatalf("silenced push must NOT create message_thread (got %d)", f.threads.count())
+	}
+}
+
+// TestWorkerV73NoSilenceMatchSendsNormally proves the negative space:
+// silence exists for OTHER pattern → payload falls through to Send.
+func TestWorkerV73NoSilenceMatchSendsNormally(t *testing.T) {
+	sender := &fakeSender{resp: func(int) (int64, error) { return 9, nil }}
+	f := newWorkerFixture(t, sender, true)
+	if err := f.silences.Insert(context.Background(), &domain.Silence{
+		TenantID:  1,
+		Pattern:   "web02",
+		CreatedBy: "@op",
+		ExpiresAt: f.clk.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed silence: %v", err)
+	}
+	_ = f.enqueueWithPayload(t, `{"name":"x","_fingerprint":"db01-cpu"}`)
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("expected send (non-matching silence), got calls=%d", sender.calls)
+	}
+}
+
+// TestWorkerV73ExpiredSilenceIgnored: silence whose ExpiresAt is in
+// the past is NOT consulted; the alert ships normally.
+func TestWorkerV73ExpiredSilenceIgnored(t *testing.T) {
+	sender := &fakeSender{resp: func(int) (int64, error) { return 1, nil }}
+	f := newWorkerFixture(t, sender, true)
+	if err := f.silences.Insert(context.Background(), &domain.Silence{
+		TenantID:  1,
+		Pattern:   "db01",
+		CreatedBy: "@op",
+		ExpiresAt: f.clk.Now().Add(-time.Minute), // already lifted
+	}); err != nil {
+		t.Fatalf("seed silence: %v", err)
+	}
+	_ = f.enqueueWithPayload(t, `{"name":"x","_fingerprint":"db01-cpu"}`)
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("expired silence must NOT suppress (got calls=%d)", sender.calls)
+	}
+}
+
+// TestWorkerV73NoFingerprintBypassesSilence: payload without
+// `_fingerprint` is never silence-checked; legacy passthrough.
+func TestWorkerV73NoFingerprintBypassesSilence(t *testing.T) {
+	sender := &fakeSender{resp: func(int) (int64, error) { return 1, nil }}
+	f := newWorkerFixture(t, sender, true)
+	// Seed a silence that would prefix-match the alert TEXT but no
+	// fingerprint is supplied — silence is keyed on fingerprint only.
+	if err := f.silences.Insert(context.Background(), &domain.Silence{
+		TenantID:  1,
+		Pattern:   "Hello",
+		CreatedBy: "@op",
+		ExpiresAt: f.clk.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed silence: %v", err)
+	}
+	_ = f.enqueueWithPayload(t, `{"name":"world"}`) // no fingerprint
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("no-fingerprint must bypass silence (got calls=%d)", sender.calls)
+	}
+}

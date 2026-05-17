@@ -19,6 +19,7 @@ type Factory struct {
 	catalog    CommandCatalog
 	remover    SubscriberRemover
 	acker      AlertAcker
+	silences   SilenceManager
 	health     HealthHook
 }
 
@@ -48,6 +49,7 @@ type FactoryOptions struct {
 	Catalog    CommandCatalog
 	Remover    SubscriberRemover
 	Acker      AlertAcker
+	Silences   SilenceManager
 	Health     HealthHook
 }
 
@@ -61,6 +63,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		catalog:    opts.Catalog,
 		remover:    opts.Remover,
 		acker:      opts.Acker,
+		silences:   opts.Silences,
 		health:     opts.Health,
 	}
 }
@@ -79,6 +82,7 @@ func (f *Factory) Build(bot *domain.Bot) (platform.Listener, error) {
 		Catalog:    f.catalog,
 		Remover:    f.remover,
 		Acker:      f.acker,
+		Silences:   f.silences,
 		Health:     f.health,
 	})
 }

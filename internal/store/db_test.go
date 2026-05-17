@@ -68,6 +68,7 @@ func TestMigrate_AllTablesPresent(t *testing.T) {
 		"push_outbox",
 		"rate_buckets",
 		"sessions",
+		"silences",
 		"subscribers",
 		"templates",
 		"tenants",

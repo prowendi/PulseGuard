@@ -135,6 +135,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	subscribers := store.NewSubscriberRepo(db, clock)
 	alertAcks := store.NewAlertAckRepo(db, clock)
 	messageThreads := store.NewMessageThreadRepo(db, clock)
+	silences := store.NewSilenceRepo(db, clock)
 
 	// ── 4. Sender (real TG client wrapped in the V7-1/V7-2 adapter
 	// that exposes SendWithOpts + EditMessage on top of the legacy
@@ -184,6 +185,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 			Sender:         sender,
 			Clock:          clock,
 			MessageThreads: messageThreads,
+			Silences:       silences,
 			Logger:         logger,
 		}, pipeline.WorkerCfg{
 			WorkerID:     fmt.Sprintf("w-%d-%d", pid, i),
@@ -230,12 +232,14 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 
 	// CommandCatalog adapter: the listener consults this on startup to
 	// publish setMyCommands and to back /commands. SubscriberRemover
-	// powers /unsubscribe. AlertAcker powers /ack. Domain→telegram
-	// projections are intentionally narrow so the listener package
-	// never imports domain types beyond what it owns.
+	// powers /unsubscribe. AlertAcker powers /ack. SilenceManager powers
+	// the V7-3 /silence /silence_list /unsilence built-ins. Domain →
+	// telegram projections are intentionally narrow so the listener
+	// package never imports domain types beyond what it owns.
 	catalog := commandCatalogAdapter{commands: commands}
 	remover := subscriberRemoverAdapter{subscribers: subscribers}
 	acker := alertAckerAdapter{acks: alertAcks, bots: bots}
+	silencer := silenceManagerAdapter{silences: silences, bots: bots, clock: clock}
 
 	// listenerMgr is created below; the Health hook needs a closure
 	// that captures it, but the factories also need the hook. We use
@@ -275,6 +279,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 				Catalog:    catalog,
 				Remover:    remover,
 				Acker:      acker,
+				Silences:   silencer,
 				Health:     healthHook,
 			}),
 		}

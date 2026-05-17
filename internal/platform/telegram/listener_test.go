@@ -1103,3 +1103,280 @@ func TestListener_HealthHookOnBuiltinSkipsDispatch(t *testing.T) {
 		t.Fatalf("OnDispatch fired %d times for /start, want 0", got)
 	}
 }
+
+// =====================================================================
+// V7-3 /silence /silence_list /unsilence built-ins
+// =====================================================================
+
+// fakeSilenceManager is a scriptable telegram.SilenceManager. Each call
+// is recorded so tests can assert pattern/duration/createdBy and the
+// reply text the listener produced.
+type fakeSilenceManager struct {
+	mu          sync.Mutex
+	insertCalls []SilenceInsertInput
+	listRows    []SilenceSummary
+	listErr     error
+	deleteN     int64
+	deleteCalls []string
+}
+
+func newFakeSilenceManager() *fakeSilenceManager { return &fakeSilenceManager{} }
+
+func (f *fakeSilenceManager) Insert(_ context.Context, in SilenceInsertInput) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.insertCalls = append(f.insertCalls, in)
+	return nil
+}
+
+func (f *fakeSilenceManager) List(_ context.Context, _ int64) ([]SilenceSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	out := make([]SilenceSummary, len(f.listRows))
+	copy(out, f.listRows)
+	return out, nil
+}
+
+func (f *fakeSilenceManager) DeleteByPattern(_ context.Context, _ int64, pattern string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteCalls = append(f.deleteCalls, pattern)
+	return f.deleteN, nil
+}
+
+func (f *fakeSilenceManager) inserts() []SilenceInsertInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]SilenceInsertInput, len(f.insertCalls))
+	copy(out, f.insertCalls)
+	return out
+}
+
+// TestListener_SilenceBuiltin_InsertsAndReplies covers the happy path:
+// /silence db01 2h produces a SilenceInsertInput with the right
+// pattern/duration and the user sees the confirmation reply.
+func TestListener_SilenceBuiltin_InsertsAndReplies(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {
+			"chat":{"id":555},
+			"from":{"id":7,"is_bot":false,"username":"op"},
+			"text":"/silence db01 2h"
+		}
+	}]}`)
+
+	sm := newFakeSilenceManager()
+	l, err := New(botFixture(), Options{
+		APIBase:  srv.URL,
+		HTTP:     srv.Client(),
+		Logger:   quietLogger(),
+		Silences: sm,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(sm.inserts()) >= 1 })
+	in := sm.inserts()[0]
+	if in.Pattern != "db01" {
+		t.Fatalf("Pattern = %q, want db01", in.Pattern)
+	}
+	if in.Duration != 2*time.Hour {
+		t.Fatalf("Duration = %v, want 2h", in.Duration)
+	}
+	if in.CreatedBy != "@op" {
+		t.Fatalf("CreatedBy = %q, want @op", in.CreatedBy)
+	}
+	if in.BotID != 42 {
+		t.Fatalf("BotID = %d, want 42 (DB id)", in.BotID)
+	}
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	got := srv.sentSnapshot()[0].Text
+	if !strings.Contains(got, "已静默") || !strings.Contains(got, "db01") {
+		t.Fatalf("unexpected reply: %q", got)
+	}
+}
+
+// TestListener_SilenceBuiltin_UsageHint: missing args → usage hint, no
+// manager invocation.
+func TestListener_SilenceBuiltin_UsageHint(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":555}, "text":"/silence"}
+	}]}`)
+
+	sm := newFakeSilenceManager()
+	l, err := New(botFixture(), Options{
+		APIBase:  srv.URL,
+		HTTP:     srv.Client(),
+		Logger:   quietLogger(),
+		Silences: sm,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "用法") {
+		t.Fatalf("expected usage hint, got %q", got)
+	}
+	if got := len(sm.inserts()); got != 0 {
+		t.Fatalf("manager called %d times with no args, want 0", got)
+	}
+}
+
+// TestListener_SilenceBuiltin_BadDuration: /silence db01 banana →
+// friendly error, no insert.
+func TestListener_SilenceBuiltin_BadDuration(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":555}, "text":"/silence db01 banana"}
+	}]}`)
+	sm := newFakeSilenceManager()
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL, HTTP: srv.Client(),
+		Logger: quietLogger(), Silences: sm,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "无法解析时长") {
+		t.Fatalf("expected duration parse error, got %q", got)
+	}
+	if got := len(sm.inserts()); got != 0 {
+		t.Fatalf("manager called %d times on bad duration, want 0", got)
+	}
+}
+
+// TestListener_SilenceList_RendersRows: /silence_list returns a table-
+// like reply with each active row.
+func TestListener_SilenceList_RendersRows(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":555}, "text":"/silence_list"}
+	}]}`)
+	sm := newFakeSilenceManager()
+	sm.listRows = []SilenceSummary{
+		{ID: 1, Pattern: "db01", CreatedBy: "@a", ExpiresAt: time.Date(2026, 5, 17, 14, 0, 0, 0, time.UTC)},
+		{ID: 2, Pattern: "web", CreatedBy: "@b", ExpiresAt: time.Date(2026, 5, 17, 15, 30, 0, 0, time.UTC)},
+	}
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL, HTTP: srv.Client(),
+		Logger: quietLogger(), Silences: sm,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	got := srv.sentSnapshot()[0].Text
+	if !strings.Contains(got, "db01") || !strings.Contains(got, "web") {
+		t.Fatalf("expected both patterns in reply, got %q", got)
+	}
+	if !strings.Contains(got, "@a") || !strings.Contains(got, "@b") {
+		t.Fatalf("expected createdBy attributions in reply, got %q", got)
+	}
+}
+
+// TestListener_SilenceList_Empty: zero active rows → friendly empty
+// reply.
+func TestListener_SilenceList_Empty(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":555}, "text":"/silence_list"}
+	}]}`)
+	sm := newFakeSilenceManager()
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL, HTTP: srv.Client(),
+		Logger: quietLogger(), Silences: sm,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "暂无活跃静默") {
+		t.Fatalf("expected empty-state reply, got %q", got)
+	}
+}
+
+// TestListener_Unsilence_DeletesAndReplies: deleteN matches the manager
+// stub's response. n > 0 → "已取消 N 条"; n == 0 → "未找到".
+func TestListener_Unsilence_DeletesAndReplies(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":555}, "text":"/unsilence db01"}
+	}]}`)
+	sm := newFakeSilenceManager()
+	sm.deleteN = 2
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL, HTTP: srv.Client(),
+		Logger: quietLogger(), Silences: sm,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	got := srv.sentSnapshot()[0].Text
+	if !strings.Contains(got, "已取消") || !strings.Contains(got, "db01") {
+		t.Fatalf("unexpected reply: %q", got)
+	}
+}
+
+// TestListener_Unsilence_NoMatch: deleteN==0 → 未找到 reply.
+func TestListener_Unsilence_NoMatch(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":555}, "text":"/unsilence db01"}
+	}]}`)
+	sm := newFakeSilenceManager()
+	sm.deleteN = 0
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL, HTTP: srv.Client(),
+		Logger: quietLogger(), Silences: sm,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "未找到") {
+		t.Fatalf("expected not-found reply, got %q", got)
+	}
+}

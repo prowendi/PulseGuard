@@ -339,6 +339,98 @@ func (r *fakeMessageThreadRepo) count() int {
 	return len(r.threads)
 }
 
+// fakeSilenceRepo is an in-memory domain.SilenceRepo. The implementation
+// is deliberately tiny — V7-3 worker tests only need Insert/Match. Other
+// methods return nil so they satisfy the interface.
+type fakeSilenceRepo struct {
+	mu      sync.Mutex
+	rows    []*domain.Silence
+	seq     int64
+	matchErr error
+}
+
+func newFakeSilenceRepo() *fakeSilenceRepo { return &fakeSilenceRepo{} }
+
+func (r *fakeSilenceRepo) Insert(ctx context.Context, s *domain.Silence) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seq++
+	s.ID = r.seq
+	cp := *s
+	r.rows = append(r.rows, &cp)
+	return nil
+}
+
+func (r *fakeSilenceRepo) ListActive(ctx context.Context, tenantID int64, now time.Time) ([]*domain.Silence, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.Silence
+	for _, s := range r.rows {
+		if s.TenantID == tenantID && !now.After(s.ExpiresAt) {
+			cp := *s
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeSilenceRepo) Delete(ctx context.Context, tenantID, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, s := range r.rows {
+		if s.TenantID == tenantID && s.ID == id {
+			r.rows = append(r.rows[:i], r.rows[i+1:]...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+func (r *fakeSilenceRepo) DeleteByPattern(ctx context.Context, tenantID int64, pattern string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var keep []*domain.Silence
+	var n int64
+	for _, s := range r.rows {
+		if s.TenantID == tenantID && s.Pattern == pattern {
+			n++
+			continue
+		}
+		keep = append(keep, s)
+	}
+	r.rows = keep
+	return n, nil
+}
+
+func (r *fakeSilenceRepo) Match(ctx context.Context, tenantID int64, fingerprint string, now time.Time) (bool, error) {
+	if r.matchErr != nil {
+		return false, r.matchErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if fingerprint == "" {
+		return false, nil
+	}
+	for _, s := range r.rows {
+		if s.TenantID != tenantID {
+			continue
+		}
+		if now.After(s.ExpiresAt) {
+			continue
+		}
+		if strings.HasPrefix(fingerprint, s.Pattern) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *fakeSilenceRepo) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.rows)
+}
+
 type fakeSender struct {
 	mu    sync.Mutex
 	calls int
@@ -390,17 +482,18 @@ func (s *fakeSender) EditMessage(ctx context.Context, botToken, chatID string, m
 // =====================================================================
 
 type workerFixture struct {
-	outbox  *fakeOutbox
-	logs    *fakeLogRepo
-	dlq     *fakeDLQ
-	chans   *fakeChannelRepo
-	bots    *fakeBotRepo
-	tpls    *fakeTplRepo
-	rl      *fakeRL
-	threads *fakeMessageThreadRepo
-	clk     *domain.FakeClock
-	w       *Worker
-	logBuf  *syncBuffer
+	outbox   *fakeOutbox
+	logs     *fakeLogRepo
+	dlq      *fakeDLQ
+	chans    *fakeChannelRepo
+	bots     *fakeBotRepo
+	tpls     *fakeTplRepo
+	rl       *fakeRL
+	threads  *fakeMessageThreadRepo
+	silences *fakeSilenceRepo
+	clk      *domain.FakeClock
+	w        *Worker
+	logBuf   *syncBuffer
 }
 
 // syncBuffer is a goroutine-safe wrapper around bytes.Buffer so multiple
@@ -439,6 +532,7 @@ func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerF
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	threads := newFakeMessageThreadRepo()
+	silences := newFakeSilenceRepo()
 	deps := WorkerDeps{
 		Outbox:         newFakeOutbox(),
 		Channels:       chans,
@@ -450,22 +544,24 @@ func newWorkerFixture(t *testing.T, sender domain.Sender, rlAllow bool) *workerF
 		Sender:         sender,
 		Clock:          clk,
 		MessageThreads: threads,
+		Silences:       silences,
 		Logger:         logger,
 	}
 	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
 	w := New(deps, cfg)
 	return &workerFixture{
-		outbox:  deps.Outbox.(*fakeOutbox),
-		logs:    deps.Logs.(*fakeLogRepo),
-		dlq:     deps.DLQ.(*fakeDLQ),
-		chans:   chans,
-		bots:    bots,
-		tpls:    tpls,
-		rl:      deps.RL.(*fakeRL),
-		threads: threads,
-		clk:     clk,
-		w:       w,
-		logBuf:  logBuf,
+		outbox:   deps.Outbox.(*fakeOutbox),
+		logs:     deps.Logs.(*fakeLogRepo),
+		dlq:      deps.DLQ.(*fakeDLQ),
+		chans:    chans,
+		bots:     bots,
+		tpls:     tpls,
+		rl:       deps.RL.(*fakeRL),
+		threads:  threads,
+		silences: silences,
+		clk:      clk,
+		w:        w,
+		logBuf:   logBuf,
 	}
 }
 
@@ -845,6 +941,7 @@ func newMultiTemplateFixture(t *testing.T, sender domain.Sender) *workerFixture 
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	threads := newFakeMessageThreadRepo()
+	silences := newFakeSilenceRepo()
 	deps := WorkerDeps{
 		Outbox:         newFakeOutbox(),
 		Channels:       chans,
@@ -856,22 +953,24 @@ func newMultiTemplateFixture(t *testing.T, sender domain.Sender) *workerFixture 
 		Sender:         sender,
 		Clock:          clk,
 		MessageThreads: threads,
+		Silences:       silences,
 		Logger:         logger,
 	}
 	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
 	w := New(deps, cfg)
 	return &workerFixture{
-		outbox:  deps.Outbox.(*fakeOutbox),
-		logs:    deps.Logs.(*fakeLogRepo),
-		dlq:     deps.DLQ.(*fakeDLQ),
-		chans:   chans,
-		bots:    bots,
-		tpls:    tpls,
-		rl:      deps.RL.(*fakeRL),
-		threads: threads,
-		clk:     clk,
-		w:       w,
-		logBuf:  logBuf,
+		outbox:   deps.Outbox.(*fakeOutbox),
+		logs:     deps.Logs.(*fakeLogRepo),
+		dlq:      deps.DLQ.(*fakeDLQ),
+		chans:    chans,
+		bots:     bots,
+		tpls:     tpls,
+		rl:       deps.RL.(*fakeRL),
+		threads:  threads,
+		silences: silences,
+		clk:      clk,
+		w:        w,
+		logBuf:   logBuf,
 	}
 }
 
@@ -1090,6 +1189,7 @@ func newConditionFixture(t *testing.T, sender domain.Sender) *workerFixture {
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	threads := newFakeMessageThreadRepo()
+	silences := newFakeSilenceRepo()
 	deps := WorkerDeps{
 		Outbox:         newFakeOutbox(),
 		Channels:       chans,
@@ -1101,22 +1201,24 @@ func newConditionFixture(t *testing.T, sender domain.Sender) *workerFixture {
 		Sender:         sender,
 		Clock:          clk,
 		MessageThreads: threads,
+		Silences:       silences,
 		Logger:         logger,
 	}
 	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
 	w := New(deps, cfg)
 	return &workerFixture{
-		outbox:  deps.Outbox.(*fakeOutbox),
-		logs:    deps.Logs.(*fakeLogRepo),
-		dlq:     deps.DLQ.(*fakeDLQ),
-		chans:   chans,
-		bots:    bots,
-		tpls:    tpls,
-		rl:      deps.RL.(*fakeRL),
-		threads: threads,
-		clk:     clk,
-		w:       w,
-		logBuf:  logBuf,
+		outbox:   deps.Outbox.(*fakeOutbox),
+		logs:     deps.Logs.(*fakeLogRepo),
+		dlq:      deps.DLQ.(*fakeDLQ),
+		chans:    chans,
+		bots:     bots,
+		tpls:     tpls,
+		rl:       deps.RL.(*fakeRL),
+		threads:  threads,
+		silences: silences,
+		clk:      clk,
+		w:        w,
+		logBuf:   logBuf,
 	}
 }
 

@@ -107,6 +107,45 @@ type AlertAcker interface {
 	Insert(ctx context.Context, in AckInput) error
 }
 
+// SilenceManager exposes the narrow set of operations the V7-3
+// /silence built-ins need. Implementations live in runtime/ and
+// resolve the bot → tenant mapping before forwarding to the
+// underlying domain.SilenceRepo.
+//
+// Insert: create a silence rule.
+// List:   active silences for the bot's tenant.
+// DeleteByPattern: drop every active silence whose pattern matches the
+// supplied string (returns number affected so the listener can craft
+// a useful reply).
+type SilenceManager interface {
+	Insert(ctx context.Context, in SilenceInsertInput) error
+	List(ctx context.Context, botID int64) ([]SilenceSummary, error)
+	DeleteByPattern(ctx context.Context, botID int64, pattern string) (int64, error)
+}
+
+// SilenceInsertInput is the listener → SilenceManager contract for
+// /silence. Duration is parsed by the listener (time.ParseDuration)
+// before the manager sees it so the manager can stamp ExpiresAt with
+// the injected clock and stay deterministic in tests.
+type SilenceInsertInput struct {
+	BotID     int64
+	ChatID    string
+	Pattern   string
+	Duration  time.Duration
+	CreatedBy string
+}
+
+// SilenceSummary is the listener-facing projection of a domain.Silence.
+// Pattern + ExpiresAt + CreatedBy are the operator-relevant fields;
+// id is included so /silence_list output can pair with an explicit
+// /unsilence_id flow later if needed.
+type SilenceSummary struct {
+	ID        int64
+	Pattern   string
+	CreatedBy string
+	ExpiresAt time.Time
+}
+
 // AckInput is the listener → AlertAcker contract.
 type AckInput struct {
 	BotID       int64
@@ -201,6 +240,7 @@ type Listener struct {
 	catalog    CommandCatalog    // optional: powers setMyCommands + /commands
 	remover    SubscriberRemover // optional: powers /unsubscribe
 	acker      AlertAcker        // optional: powers /ack
+	silences   SilenceManager    // optional: powers /silence /silence_list /unsilence
 	health     HealthHook        // optional: bumps Manager health counters
 }
 
@@ -231,6 +271,7 @@ type Options struct {
 	Catalog    CommandCatalog
 	Remover    SubscriberRemover
 	Acker      AlertAcker
+	Silences   SilenceManager
 	Health     HealthHook
 }
 
@@ -276,6 +317,7 @@ func New(bot *domain.Bot, opts Options) (*Listener, error) {
 		catalog:    opts.Catalog,
 		remover:    opts.Remover,
 		acker:      opts.Acker,
+		silences:   opts.Silences,
 		health:     opts.Health,
 	}, nil
 }
@@ -508,6 +550,26 @@ func (l *Listener) handle(ctx context.Context, u update) {
 		}
 		l.handleAck(ctx, msg.Chat.ID, fp, msg.From)
 		return
+	case "/silence":
+		var pattern, dur string
+		if len(tokens) > 1 {
+			pattern = tokens[1]
+		}
+		if len(tokens) > 2 {
+			dur = tokens[2]
+		}
+		l.handleSilence(ctx, msg.Chat.ID, pattern, dur, msg.From)
+		return
+	case "/silence_list":
+		l.handleSilenceList(ctx, msg.Chat.ID)
+		return
+	case "/unsilence":
+		var pattern string
+		if len(tokens) > 1 {
+			pattern = tokens[1]
+		}
+		l.handleUnsilence(ctx, msg.Chat.ID, pattern)
+		return
 	}
 
 	// Anything else starting with "/" is a candidate for the
@@ -738,6 +800,116 @@ func ackedByLabel(from *chatUser, chatID int64) string {
 		}
 	}
 	return "chat:" + strconv.FormatInt(chatID, 10)
+}
+
+// handleSilence processes "/silence <pattern> <duration>". The
+// duration is parsed via time.ParseDuration so "1h", "30m", "2h30m"
+// are all valid. Replies cover the common operator typos so the user
+// learns what shape the command wants without consulting docs.
+func (l *Listener) handleSilence(ctx context.Context, chatID int64, pattern, dur string, from *chatUser) {
+	pattern = strings.TrimSpace(pattern)
+	dur = strings.TrimSpace(dur)
+	if pattern == "" || dur == "" {
+		l.replyText(ctx, chatID, "用法：/silence <pattern> <duration>\n例如：/silence db01 2h")
+		return
+	}
+	if l.silences == nil {
+		l.logger.Info("telegram: /silence received but silences not wired",
+			"bot_id", l.botID, "tenant_id", l.tenantID, "pattern", pattern)
+		return
+	}
+	parsed, err := time.ParseDuration(dur)
+	if err != nil {
+		l.replyText(ctx, chatID, "无法解析时长 "+dur+"（示例：1h, 30m, 2h30m）")
+		return
+	}
+	if parsed <= 0 {
+		l.replyText(ctx, chatID, "时长必须为正值")
+		return
+	}
+	createdBy := ackedByLabel(from, chatID)
+	silenceCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err = l.silences.Insert(silenceCtx, SilenceInsertInput{
+		BotID:     l.dbBotID,
+		ChatID:    strconv.FormatInt(chatID, 10),
+		Pattern:   pattern,
+		Duration:  parsed,
+		CreatedBy: createdBy,
+	})
+	if err != nil {
+		l.logger.Warn("telegram: /silence insert failed",
+			"bot_id", l.botID, "tenant_id", l.tenantID,
+			"pattern", pattern, "duration", parsed.String(), "err", err.Error())
+		l.replyText(ctx, chatID, "添加静默失败")
+		return
+	}
+	l.replyText(ctx, chatID, "已静默 "+pattern+" "+parsed.String())
+}
+
+// handleSilenceList replies with the active silences for the bot's
+// tenant. Empty manager → silent (consistent with /commands).
+func (l *Listener) handleSilenceList(ctx context.Context, chatID int64) {
+	if l.silences == nil {
+		l.logger.Info("telegram: /silence_list received but silences not wired",
+			"bot_id", l.botID, "tenant_id", l.tenantID)
+		return
+	}
+	listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	rows, err := l.silences.List(listCtx, l.dbBotID)
+	if err != nil {
+		l.logger.Warn("telegram: /silence_list failed",
+			"bot_id", l.botID, "tenant_id", l.tenantID, "err", err.Error())
+		l.replyText(ctx, chatID, "查询静默列表失败")
+		return
+	}
+	if len(rows) == 0 {
+		l.replyText(ctx, chatID, "暂无活跃静默")
+		return
+	}
+	var b strings.Builder
+	b.WriteString("活跃静默：\n")
+	for _, s := range rows {
+		b.WriteString(s.Pattern)
+		b.WriteString(" — 截止 ")
+		b.WriteString(s.ExpiresAt.UTC().Format("2006-01-02 15:04:05"))
+		b.WriteString(" UTC by ")
+		b.WriteString(s.CreatedBy)
+		b.WriteByte('\n')
+	}
+	l.replyText(ctx, chatID, strings.TrimRight(b.String(), "\n"))
+}
+
+// handleUnsilence drops every silence whose pattern matches the user's
+// argument exactly. The reply names the affected count so the user
+// learns whether their typo collapsed to a no-op.
+func (l *Listener) handleUnsilence(ctx context.Context, chatID int64, pattern string) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		l.replyText(ctx, chatID, "用法：/unsilence <pattern>")
+		return
+	}
+	if l.silences == nil {
+		l.logger.Info("telegram: /unsilence received but silences not wired",
+			"bot_id", l.botID, "tenant_id", l.tenantID, "pattern", pattern)
+		return
+	}
+	delCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	n, err := l.silences.DeleteByPattern(delCtx, l.dbBotID, pattern)
+	if err != nil {
+		l.logger.Warn("telegram: /unsilence failed",
+			"bot_id", l.botID, "tenant_id", l.tenantID,
+			"pattern", pattern, "err", err.Error())
+		l.replyText(ctx, chatID, "取消静默失败")
+		return
+	}
+	if n == 0 {
+		l.replyText(ctx, chatID, "未找到匹配的静默：" + pattern)
+		return
+	}
+	l.replyText(ctx, chatID, fmt.Sprintf("已取消 %d 条静默：%s", n, pattern))
 }
 
 // recordUpdate / recordDispatch / recordError are nil-safe wrappers
