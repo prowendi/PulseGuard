@@ -46,6 +46,12 @@ var larkWebhookPattern = regexp.MustCompile(`^https://open\.feishu\.cn/open-apis
 // an unknown platform so the caller can surface a clean VALIDATION
 // error instead of accepting a credential that no Sender knows how
 // to consume.
+//
+// Phase Lark-B note: lark application bots (BotKind=="app") do NOT
+// have a webhook URL — their identity is the AppID + AppSecret pair
+// (validated by botAppCredsLookValid below). The web layer must skip
+// this check on app-kind rows; routing it through the same function
+// would force an awkward "fake URL on app rows" workaround.
 func botTokenLooksValid(platform, token string) bool {
 	switch platform {
 	case domain.PlatformTelegram:
@@ -55,6 +61,29 @@ func botTokenLooksValid(platform, token string) bool {
 	default:
 		return false
 	}
+}
+
+// larkAppIDPattern accepts the canonical Lark app_id shape:
+// "cli_" followed by 8+ hex digits. We deliberately accept a longer
+// hex run than Lark currently uses so an SDK rev cannot break the
+// validator. Anything outside this shape is rejected with a precise
+// VALIDATION error.
+var larkAppIDPattern = regexp.MustCompile(`^cli_[A-Za-z0-9]{8,}$`)
+
+// botAppCredsLookValid is the LB7 sibling of botTokenLooksValid for
+// app-mode lark bots. The (appID, appSecret) tuple is the credential;
+// botToken is unused (the store layer derives it on read). When
+// appSecret is blank we tolerate it — the Update flow uses "blank
+// keep" semantics so an operator editing only the name does not have
+// to re-type the secret.
+func botAppCredsLookValid(appID, appSecret string, requireSecret bool) bool {
+	if !larkAppIDPattern.MatchString(appID) {
+		return false
+	}
+	if requireSecret && appSecret == "" {
+		return false
+	}
+	return true
 }
 
 // parsePathID extracts a positive int64 from a chi URL param, writing

@@ -152,6 +152,34 @@
     window.addEventListener("resize", dismissAll, { passive: true });
   }
 
+  // applyBotDrawerVisibility toggles the bot drawer's conditional
+  // field groups based on the current platform + bot_kind selection.
+  //
+  // Visibility matrix:
+  //   - platform=telegram         → kind-row hidden, webhook-fields shown
+  //   - platform=lark + webhook   → kind-row shown,  webhook-fields shown
+  //   - platform=lark + app       → kind-row shown,  app-fields shown
+  //
+  // scope is "new" or "edit"; the data-scope attribute on each field
+  // group lets the same helper drive both drawers.
+  function applyBotDrawerVisibility(drawer, scope) {
+    if (!drawer) return;
+    var platSel = drawer.querySelector('[name="platform"]');
+    var plat = platSel ? platSel.value : "telegram";
+    var kindRow = drawer.querySelector('[data-scope="' + scope + '-kind-row"]');
+    var webFields = drawer.querySelector('[data-scope="' + scope + '-webhook-fields"]');
+    var appFields = drawer.querySelector('[data-scope="' + scope + '-app-fields"]');
+    var showKindRow = (plat === "lark");
+    var kind = "webhook";
+    if (showKindRow) {
+      var checked = drawer.querySelector('input[name="bot_kind"]:checked');
+      if (checked) kind = checked.value;
+    }
+    if (kindRow) kindRow.classList.toggle("hidden", !showKindRow);
+    if (webFields) webFields.classList.toggle("hidden", showKindRow && kind === "app");
+    if (appFields) appFields.classList.toggle("hidden", !(showKindRow && kind === "app"));
+  }
+
   // ---- Global data-action delegation ----------------------------------
   // One document-level click listener handles every declarative action,
   // so templates can use plain data-* attributes instead of inline
@@ -345,10 +373,12 @@
         }
         case "edit-bot": {
           // Shared edit-drawer for the bots page. Row carries data-id /
-          // -name / -description / -platform. bot_token is intentionally
-          // NOT round-tripped — the field is left blank and the server
-          // reads "blank = keep current token". Only when the operator
-          // types a new value does the listener restart.
+          // -name / -description / -platform / -bot-kind / -app-id /
+          // -verify-token / -encrypt-key. bot_token and app_secret are
+          // intentionally NOT round-tripped — those fields are left
+          // blank and the server reads "blank = keep current secret".
+          // Only when the operator types a new value does the listener
+          // restart or the secret rotate.
           e.preventDefault();
           var dbot = document.getElementById("drawer-edit-bot");
           if (!dbot) return;
@@ -364,9 +394,42 @@
           setBot('[name="description"]', node.getAttribute("data-description"));
           setBot('[name="platform"]', node.getAttribute("data-platform"));
           setBot('[name="bot_token"]', ""); // explicit blank = keep token
+          setBot('[name="app_id"]', node.getAttribute("data-app-id"));
+          setBot('[name="app_secret"]', ""); // explicit blank = keep secret
+          setBot('[name="verify_token"]', node.getAttribute("data-verify-token"));
+          setBot('[name="encrypt_key"]', node.getAttribute("data-encrypt-key"));
+          // Set bot_kind radio (default webhook for legacy rows). Find
+          // the matching radio button in the edit drawer and tick it.
+          var kind = node.getAttribute("data-bot-kind") || "webhook";
+          var radios = dbot.querySelectorAll('[name="bot_kind"]');
+          radios.forEach(function (r) {
+            r.checked = (r.value === kind);
+          });
+          // Drive the conditional sections via applyBotDrawerVisibility
+          // so the freshly-prefilled drawer matches the row's actual
+          // platform+kind state on first paint.
+          applyBotDrawerVisibility(dbot, "edit");
           if (typeof window.psgOpenDrawer === "function") {
             window.psgOpenDrawer("drawer-edit-bot");
           }
+          break;
+        }
+        case "lark-kind-changed": {
+          // Bot drawer (new or edit): the operator toggled the
+          // webhook/app radio. Re-apply visibility so the right field
+          // group is shown.
+          var scope = node.getAttribute("data-scope") || "new";
+          var drawer = document.getElementById(scope === "edit" ? "drawer-edit-bot" : "drawer-new-bot");
+          if (drawer) applyBotDrawerVisibility(drawer, scope);
+          break;
+        }
+        case "lark-kind-platform": {
+          // Bot drawer (new or edit): the operator changed the platform
+          // <select>. Show / hide the lark-kind radio row + the
+          // appropriate field group.
+          var pscope = node.getAttribute("data-scope") || "new";
+          var pdrawer = document.getElementById(pscope === "edit" ? "drawer-edit-bot" : "drawer-new-bot");
+          if (pdrawer) applyBotDrawerVisibility(pdrawer, pscope);
           break;
         }
         case "tpl-preview": {
@@ -483,12 +546,33 @@
     });
     bindToggles();
     bindActionDelegation();
+    bindBotDrawerChangeEvents();
     bindConfirmSubmit();
     ensureToastStack();
     consumeFlashCookie();
   });
   // HTMX swaps may inject new toggle buttons; re-bind after each swap.
   document.addEventListener("htmx:afterSwap", bindToggles);
+
+  // bindBotDrawerChangeEvents is a tiny "change"-event delegate that
+  // catches platform <select> and bot_kind radio changes inside any bot
+  // drawer (new + edit) and routes them through applyBotDrawerVisibility.
+  // The data-action="lark-kind-changed" / "lark-kind-platform" click
+  // handlers already cover the radio-toggle case for browsers that
+  // surface click on the label; the change listener is the belt-and-
+  // braces path for the <select> (which never fires click on value
+  // change) and for keyboard-only users.
+  function bindBotDrawerChangeEvents() {
+    document.addEventListener("change", function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      var action = t.getAttribute("data-action");
+      if (action !== "lark-kind-changed" && action !== "lark-kind-platform") return;
+      var scope = t.getAttribute("data-scope") || "new";
+      var drawer = document.getElementById(scope === "edit" ? "drawer-edit-bot" : "drawer-new-bot");
+      if (drawer) applyBotDrawerVisibility(drawer, scope);
+    });
+  }
 
   // ---- Right-side drawer (Linear/Vercel style) -------------------------
   // Markup contract (data-action wired from app.js — no inline handlers):

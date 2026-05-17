@@ -24,13 +24,24 @@ import (
 // counters / LastError so the bots page can render a colour-coded
 // indicator (green/yellow/red/gray) plus a tooltip without a second
 // round-trip.
+//
+// LB7 adds bot_kind ("webhook" | "app") and the public app_id /
+// verify_token / encrypt_key fields for lark application bots. The
+// app_secret is intentionally NEVER returned — only its presence is
+// surfaced via the boolean app_secret_set so the UI can show "已配置"
+// without echoing the plaintext.
 type botView struct {
 	ID            int64         `json:"id"`
 	Name          string        `json:"name"`
 	Platform      string        `json:"platform"`
+	BotKind       string        `json:"bot_kind"`
 	Description   string        `json:"description,omitempty"`
 	BotTokenLast4 string        `json:"bot_token_last4"`
 	Enabled       bool          `json:"enabled"`
+	AppID         string        `json:"app_id,omitempty"`
+	VerifyToken   string        `json:"verify_token,omitempty"`
+	EncryptKey    string        `json:"encrypt_key,omitempty"`
+	AppSecretSet  bool          `json:"app_secret_set"`
 	CreatedAt     string        `json:"created_at"`
 	UpdatedAt     string        `json:"updated_at"`
 	Health        botHealthView `json:"health"`
@@ -105,13 +116,29 @@ func toBotViewWithHealth(b *domain.Bot, h platform.BotHealth, now time.Time) bot
 	if !h.LastErrorAt.IsZero() {
 		hv.LastErrorAt = h.LastErrorAt.UTC().Format("2006-01-02T15:04:05Z")
 	}
+	kind := b.BotKind
+	if kind == "" {
+		kind = domain.BotKindWebhook
+	}
+	// For app-mode lark bots the BotToken is a lark-app://... derived
+	// pseudo-URL, not a credential the operator pasted. Suppress the
+	// last-4 hint so the UI doesn't render garbled URL fragments where
+	// users expect their Telegram secret tail.
+	if kind == domain.BotKindApp {
+		last4 = ""
+	}
 	return botView{
 		ID:            b.ID,
 		Name:          b.Name,
 		Platform:      b.Platform,
+		BotKind:       kind,
 		Description:   b.Description,
 		BotTokenLast4: last4,
 		Enabled:       b.Enabled,
+		AppID:         b.AppID,
+		VerifyToken:   b.VerifyToken,
+		EncryptKey:    b.EncryptKey,
+		AppSecretSet:  b.AppSecret != "",
 		CreatedAt:     b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:     b.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		Health:        hv,
@@ -132,15 +159,30 @@ func healthFor(deps Deps, botID int64) platform.BotHealth {
 type botCreatePayload struct {
 	Name        string `json:"name"`
 	Platform    string `json:"platform"`
+	BotKind     string `json:"bot_kind"`
 	BotToken    string `json:"bot_token"`
 	Description string `json:"description"`
+	// LB7: Lark application bot credentials. Required when
+	// (platform=="lark", bot_kind=="app"); ignored for other rows.
+	AppID       string `json:"app_id"`
+	AppSecret   string `json:"app_secret"`
+	VerifyToken string `json:"verify_token"`
+	EncryptKey  string `json:"encrypt_key"`
 }
 
 type botUpdatePayload struct {
 	Name        *string `json:"name,omitempty"`
 	Platform    *string `json:"platform,omitempty"`
+	BotKind     *string `json:"bot_kind,omitempty"`
 	BotToken    *string `json:"bot_token,omitempty"`
 	Description *string `json:"description,omitempty"`
+	// LB7: Lark application bot credentials. AppSecret follows the
+	// existing "blank = keep current" semantics so an operator can
+	// rename a bot without re-typing the secret.
+	AppID       *string `json:"app_id,omitempty"`
+	AppSecret   *string `json:"app_secret,omitempty"`
+	VerifyToken *string `json:"verify_token,omitempty"`
+	EncryptKey  *string `json:"encrypt_key,omitempty"`
 }
 
 func installBotsAPIRoutes(r chi.Router, deps Deps) {
@@ -189,6 +231,11 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 		p.Name = strings.TrimSpace(p.Name)
 		p.BotToken = strings.TrimSpace(p.BotToken)
 		p.Platform = strings.TrimSpace(p.Platform)
+		p.BotKind = strings.TrimSpace(p.BotKind)
+		p.AppID = strings.TrimSpace(p.AppID)
+		p.AppSecret = strings.TrimSpace(p.AppSecret)
+		p.VerifyToken = strings.TrimSpace(p.VerifyToken)
+		p.EncryptKey = strings.TrimSpace(p.EncryptKey)
 		if p.Platform == "" {
 			p.Platform = domain.PlatformTelegram
 		}
@@ -196,20 +243,57 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "unknown platform")
 			return
 		}
+		if p.BotKind == "" {
+			p.BotKind = domain.BotKindWebhook
+		}
+		if !domain.IsValidBotKind(p.BotKind) {
+			writeError(w, r, http.StatusBadRequest, "VALIDATION", "unknown bot_kind")
+			return
+		}
 		if !validateName(w, r, p.Name, 64) {
 			return
 		}
-		if !botTokenLooksValid(p.Platform, p.BotToken) {
-			writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_token format invalid for platform "+p.Platform)
-			return
+		isAppKind := p.BotKind == domain.BotKindApp
+		// LB7 validation matrix:
+		//
+		// - kind=webhook → bot_token must match the platform-specific shape;
+		//   app fields are ignored.
+		// - kind=app    → app_id / app_secret / encrypt_key must be present;
+		//   bot_token is unused (the store layer derives lark-app://...).
+		if isAppKind {
+			if p.Platform != domain.PlatformLark {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION",
+					"bot_kind=app requires platform=lark")
+				return
+			}
+			if !botAppCredsLookValid(p.AppID, p.AppSecret, true /*requireSecret*/) {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION",
+					"app_id and app_secret are required (app_id must match cli_<hex>)")
+				return
+			}
+			if p.EncryptKey == "" {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION",
+					"encrypt_key is required for application bots (used to verify event signatures)")
+				return
+			}
+		} else {
+			if !botTokenLooksValid(p.Platform, p.BotToken) {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_token format invalid for platform "+p.Platform)
+				return
+			}
 		}
 		tenant := wmw.Tenant(r.Context())
 		bot := &domain.Bot{
 			TenantID:    tenant.ID,
 			Name:        p.Name,
 			Platform:    p.Platform,
+			BotKind:     p.BotKind,
 			BotToken:    p.BotToken,
 			Description: p.Description,
+			AppID:       p.AppID,
+			AppSecret:   p.AppSecret,
+			VerifyToken: p.VerifyToken,
+			EncryptKey:  p.EncryptKey,
 		}
 		if err := deps.Bots.Insert(r.Context(), bot); err != nil {
 			writeRepoError(w, r, deps, err)
@@ -258,6 +342,7 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 		}
 		prevToken := existing.BotToken
 		prevPlatform := existing.Platform
+		prevKind := existing.BotKind
 		if p.Name != nil {
 			name := strings.TrimSpace(*p.Name)
 			if !validateName(w, r, name, 64) {
@@ -276,9 +361,42 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 			}
 			existing.Platform = plat
 		}
+		if p.BotKind != nil {
+			kind := strings.TrimSpace(*p.BotKind)
+			if kind == "" {
+				kind = domain.BotKindWebhook
+			}
+			if !domain.IsValidBotKind(kind) {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "unknown bot_kind")
+				return
+			}
+			existing.BotKind = kind
+		}
+		// Apply app fields BEFORE the per-kind validation so the
+		// validator sees the operator's intended final state.
+		if p.AppID != nil {
+			existing.AppID = strings.TrimSpace(*p.AppID)
+		}
+		if p.AppSecret != nil {
+			// "blank = keep" semantics: a nil pointer means "field
+			// omitted from request", an empty string means "operator
+			// explicitly cleared it" — we treat both the same way at
+			// this layer (the store layer preserves on empty), so the
+			// only path that rotates the secret is a non-empty value.
+			existing.AppSecret = strings.TrimSpace(*p.AppSecret)
+		}
+		if p.VerifyToken != nil {
+			existing.VerifyToken = strings.TrimSpace(*p.VerifyToken)
+		}
+		if p.EncryptKey != nil {
+			existing.EncryptKey = strings.TrimSpace(*p.EncryptKey)
+		}
 		if p.BotToken != nil {
 			tok := strings.TrimSpace(*p.BotToken)
-			if !botTokenLooksValid(existing.Platform, tok) {
+			// Skip token shape validation for app-kind bots — the field
+			// is derived on read. The operator probably submitted the
+			// empty string from the UI; either way, ignore it.
+			if existing.BotKind != domain.BotKindApp && !botTokenLooksValid(existing.Platform, tok) {
 				writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_token format invalid for platform "+existing.Platform)
 				return
 			}
@@ -287,17 +405,55 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 		if p.Description != nil {
 			existing.Description = *p.Description
 		}
+		// LB7 post-application validation: enforce the kind/platform
+		// invariants on the final state.
+		if existing.BotKind == domain.BotKindApp {
+			if existing.Platform != domain.PlatformLark {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION",
+					"bot_kind=app requires platform=lark")
+				return
+			}
+			// AppSecret may legitimately be empty here (preserve-existing
+			// flow) — only require it when the operator is creating the
+			// secret for the first time, which we detect by the lack of
+			// a stored value plus an empty new value.
+			if !botAppCredsLookValid(existing.AppID, existing.AppSecret, existing.AppSecret == "" && !hasStoredAppSecret(deps, tenant.ID, existing.ID)) {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION",
+					"app_id must match cli_<hex>; app_secret required on first creation")
+				return
+			}
+		}
 		if err := deps.Bots.Update(r.Context(), existing); err != nil {
 			writeRepoError(w, r, deps, err)
 			return
 		}
 		// Restart the listener when the credentials that drive it
-		// changed; otherwise leave it running.
-		if existing.BotToken != prevToken || existing.Platform != prevPlatform {
+		// changed; otherwise leave it running. App-kind bots have no
+		// listener (Lark application bots receive via the public events
+		// endpoint), so restartBotListener is effectively a no-op for
+		// them — but for honesty's sake we still call it on kind
+		// changes so a webhook→app transition tears down the inbound
+		// long-poll if one was running.
+		if existing.BotToken != prevToken || existing.Platform != prevPlatform || existing.BotKind != prevKind {
 			restartBotListener(deps, existing)
 		}
 		writeJSON(w, http.StatusOK, toBotView(existing))
 	}
+}
+
+// hasStoredAppSecret peeks at the row's current state to decide
+// whether AppSecret is being created (no existing secret) vs rotated
+// (some existing secret). The narrow query is wrapped so the
+// validation path doesn't have to thread a fresh GetByID call.
+func hasStoredAppSecret(deps Deps, tenantID, botID int64) bool {
+	if deps.Bots == nil {
+		return false
+	}
+	b, err := deps.Bots.GetByID(context.Background(), tenantID, botID)
+	if err != nil {
+		return false
+	}
+	return b.AppSecret != ""
 }
 
 func apiBotDelete(deps Deps) http.HandlerFunc {

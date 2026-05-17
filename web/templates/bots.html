@@ -63,6 +63,10 @@
                       data-name="{{ .Name }}"
                       data-description="{{ .Description }}"
                       data-platform="{{ .Platform }}"
+                      data-bot-kind="{{ .BotKind }}"
+                      data-app-id="{{ .AppID }}"
+                      data-verify-token="{{ .VerifyToken }}"
+                      data-encrypt-key="{{ .EncryptKey }}"
                       class="inline-flex items-center gap-1 text-[12.5px] text-emerald-600 hover:text-emerald-700 font-medium hover:bg-emerald-50 px-2 py-1 rounded transition-colors dark:hover:bg-emerald-500/10">编辑</button>
               <form method="POST" action="/ui/bots/{{ .ID }}/delete" data-confirm="确认删除？此操作不可撤销。" class="inline ml-1">
                 <input type="hidden" name="csrf" value="{{ $csrf }}">
@@ -99,16 +103,51 @@
       </div>
       <div>
         <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">平台</label>
-        <select name="platform" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+        <select name="platform" data-action="lark-kind-platform" data-scope="new" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
           <option value="telegram" selected>Telegram</option>
-          <option value="lark">Lark / 飞书 (Webhook)</option>
+          <option value="lark">Lark / 飞书</option>
         </select>
-        <p class="mt-1.5 text-[11.5px] text-slate-500">Telegram 全双向（push + listener + 内联按钮）；Lark 仅 push（custom bot webhook，无 listener / 无按钮 / 无 edit）。</p>
+        <p class="mt-1.5 text-[11.5px] text-slate-500">Telegram 全双向（push + listener + 内联按钮）；Lark 支持 Webhook（仅 push）与 应用机器人（双向 + 事件订阅）。</p>
       </div>
-      <div class="psg-float-wrap">
-        <input type="text" id="bt" name="bot_token" required placeholder="Telegram: 12345:AAEX...  /  Lark: https://open.feishu.cn/open-apis/bot/v2/hook/&lt;key&gt;" class="psg-float-input font-mono">
-        <label for="bt" class="psg-float-label">Bot Token / Webhook URL</label>
-        <p class="mt-1.5 text-[11.5px] text-slate-500">Telegram 填 <code class="px-1 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">数字:字母</code>；Lark 填完整 webhook URL（含 <code class="px-1 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">https://open.feishu.cn/open-apis/bot/v2/hook/…</code>）。</p>
+      <div data-scope="new-kind-row" class="hidden">
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Lark 类型</label>
+        <div class="flex items-center gap-4 text-sm">
+          <label class="inline-flex items-center gap-1.5">
+            <input type="radio" name="bot_kind" value="webhook" data-action="lark-kind-changed" data-scope="new" checked class="text-emerald-600 focus:ring-emerald-500">
+            <span>Custom Bot Webhook</span>
+          </label>
+          <label class="inline-flex items-center gap-1.5">
+            <input type="radio" name="bot_kind" value="app" data-action="lark-kind-changed" data-scope="new" class="text-emerald-600 focus:ring-emerald-500">
+            <span>应用机器人（App）</span>
+          </label>
+        </div>
+        <p class="mt-1.5 text-[11.5px] text-slate-500">Webhook：单向群推送；App：OAuth + IM API + 事件订阅，可双向交互。</p>
+      </div>
+      <div data-scope="new-webhook-fields">
+        <div class="psg-float-wrap">
+          <input type="text" id="bt" name="bot_token" placeholder="Telegram: 12345:AAEX...  /  Lark: https://open.feishu.cn/open-apis/bot/v2/hook/&lt;key&gt;" class="psg-float-input font-mono">
+          <label for="bt" class="psg-float-label">Bot Token / Webhook URL</label>
+          <p class="mt-1.5 text-[11.5px] text-slate-500">Telegram 填 <code class="px-1 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">数字:字母</code>；Lark Webhook 填完整 URL（含 <code class="px-1 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">https://open.feishu.cn/open-apis/bot/v2/hook/…</code>）。</p>
+        </div>
+      </div>
+      <div data-scope="new-app-fields" class="hidden space-y-4">
+        <div class="psg-float-wrap">
+          <input type="text" id="bna_id" name="app_id" placeholder="cli_a1b2c3d4e5f6" class="psg-float-input font-mono">
+          <label for="bna_id" class="psg-float-label">App ID</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="password" id="bna_sec" name="app_secret" placeholder="App Secret" class="psg-float-input font-mono">
+          <label for="bna_sec" class="psg-float-label">App Secret</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bna_vt" name="verify_token" placeholder="Verification Token" class="psg-float-input font-mono">
+          <label for="bna_vt" class="psg-float-label">Verify Token（可选）</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bna_ek" name="encrypt_key" placeholder="Encrypt Key" class="psg-float-input font-mono">
+          <label for="bna_ek" class="psg-float-label">Encrypt Key</label>
+        </div>
+        <p class="text-[11.5px] text-slate-500">事件订阅 URL 请填 <code class="px-1 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">POST /api/v1/lark/events</code>。Encrypt Key 用于校验 X-Lark-Signature。</p>
       </div>
       <div class="psg-float-wrap">
         <input type="text" id="bd" name="description" placeholder="可选描述" class="psg-float-input">
@@ -145,15 +184,48 @@
       </div>
       <div>
         <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">平台</label>
-        <select name="platform" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+        <select name="platform" data-action="lark-kind-platform" data-scope="edit" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
           <option value="telegram">Telegram</option>
-          <option value="lark">Lark / 飞书 (Webhook)</option>
+          <option value="lark">Lark / 飞书</option>
         </select>
       </div>
-      <div class="psg-float-wrap">
-        <input type="text" id="bet" name="bot_token" placeholder="留空 = 不修改 token（Telegram: 12345:...  /  Lark: https://open.feishu.cn/...）" class="psg-float-input font-mono">
-        <label for="bet" class="psg-float-label">Bot Token / Webhook URL（可选）</label>
-        <p class="mt-1.5 text-[11.5px] text-slate-500">留空保留现有 token；填新值会触发 listener 重启（Lark 平台无 listener，仅替换 token）。</p>
+      <div data-scope="edit-kind-row" class="hidden">
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Lark 类型</label>
+        <div class="flex items-center gap-4 text-sm">
+          <label class="inline-flex items-center gap-1.5">
+            <input type="radio" name="bot_kind" value="webhook" data-action="lark-kind-changed" data-scope="edit" class="text-emerald-600 focus:ring-emerald-500">
+            <span>Custom Bot Webhook</span>
+          </label>
+          <label class="inline-flex items-center gap-1.5">
+            <input type="radio" name="bot_kind" value="app" data-action="lark-kind-changed" data-scope="edit" class="text-emerald-600 focus:ring-emerald-500">
+            <span>应用机器人（App）</span>
+          </label>
+        </div>
+      </div>
+      <div data-scope="edit-webhook-fields">
+        <div class="psg-float-wrap">
+          <input type="text" id="bet" name="bot_token" placeholder="留空 = 不修改 token（Telegram: 12345:...  /  Lark: https://open.feishu.cn/...）" class="psg-float-input font-mono">
+          <label for="bet" class="psg-float-label">Bot Token / Webhook URL（可选）</label>
+          <p class="mt-1.5 text-[11.5px] text-slate-500">留空保留现有 token；填新值会触发 listener 重启（Lark 平台无 listener，仅替换 token）。</p>
+        </div>
+      </div>
+      <div data-scope="edit-app-fields" class="hidden space-y-4">
+        <div class="psg-float-wrap">
+          <input type="text" id="bea_id" name="app_id" placeholder="cli_a1b2c3d4e5f6" class="psg-float-input font-mono">
+          <label for="bea_id" class="psg-float-label">App ID</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="password" id="bea_sec" name="app_secret" placeholder="留空 = 不修改 secret" class="psg-float-input font-mono">
+          <label for="bea_sec" class="psg-float-label">App Secret（可选）</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bea_vt" name="verify_token" placeholder="Verification Token" class="psg-float-input font-mono">
+          <label for="bea_vt" class="psg-float-label">Verify Token（可选）</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="bea_ek" name="encrypt_key" placeholder="Encrypt Key" class="psg-float-input font-mono">
+          <label for="bea_ek" class="psg-float-label">Encrypt Key</label>
+        </div>
       </div>
       <div class="psg-float-wrap">
         <input type="text" id="bed" name="description" placeholder="可选描述" class="psg-float-input">
