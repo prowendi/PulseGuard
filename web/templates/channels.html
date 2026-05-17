@@ -6,10 +6,10 @@
       <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">通道</h1>
       <p class="mt-1 text-sm text-slate-500">每个通道绑定 1 个 Bot + 1 个 chat_id + 1 个或多个模板；push_token 用于公开 webhook。</p>
     </div>
-    <a href="#new-ch" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
+    <button type="button" onclick="psgOpenDrawer('drawer-new-ch')" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       新建通道
-    </a>
+    </button>
   </header>
 
   <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
@@ -67,17 +67,27 @@
             </td>
           </tr>
           {{ end }}
-          {{ if not .Channels }}<tr><td colspan="10" class="px-4 py-14">{{ template "empty-state" (mkEmpty "尚无通道" "通道绑定 Bot + chat_id + 模板，对外暴露一个 push_token webhook。" "#new-ch" "新建通道") }}</td></tr>{{ end }}
+          {{ if not .Channels }}<tr><td colspan="10" class="px-4 py-14">{{ template "empty-state" (mkEmpty "尚无通道" "通道绑定 Bot + chat_id + 模板，对外暴露一个 push_token webhook。" "javascript:psgOpenDrawer('drawer-new-ch')" "新建通道") }}</td></tr>{{ end }}
         </tbody>
       </table>
     </div>
   </section>
+</div>
 
-  <section id="new-ch" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
-    <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
-      <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">新建通道</h2>
+<!-- Drawer: 新建通道 ==================================================== -->
+<div id="drawer-new-ch" class="psg-drawer fixed inset-0 z-40 hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-new-ch-title">
+  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" onclick="psgCloseDrawer('drawer-new-ch')"></div>
+  <div class="psg-drawer-panel absolute top-0 right-0 h-full w-full max-w-md bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col translate-x-full transition-transform duration-300 ease-out dark:bg-slate-900 dark:ring-white/10">
+    <header class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div>
+        <h2 id="drawer-new-ch-title" class="text-base font-semibold text-slate-900 dark:text-white">新建通道</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">填写名称 + Bot + chat_id，模板可在创建后多绑。</p>
+      </div>
+      <button type="button" onclick="psgCloseDrawer('drawer-new-ch')" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
     </header>
-    <form method="POST" action="/ui/channels" class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
+    <form method="POST" action="/ui/channels" class="flex-1 overflow-y-auto p-6 space-y-4">
       <input type="hidden" name="csrf" value="{{ .CSRF }}">
       <div class="psg-float-wrap">
         <input type="text" id="cn" name="name" required maxlength="64" placeholder="ops-critical" class="psg-float-input">
@@ -87,14 +97,14 @@
         <input type="text" id="cc" name="chat_id" required placeholder="-100123..." class="psg-float-input font-mono">
         <label for="cc" class="psg-float-label">Chat ID</label>
       </div>
-      <div class="sm:col-span-2">
+      <div>
         <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Bot</label>
         <select name="bot_id" required class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
           <option value="">请选择…</option>
           {{ range .Bots }}<option value="{{ .ID }}">{{ .Name }} (•••{{ .BotTokenLast4 }})</option>{{ end }}
         </select>
       </div>
-      <div class="sm:col-span-2">
+      <div>
         <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">模板</label>
         <select name="template_id" required class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
           <option value="">请选择…</option>
@@ -102,20 +112,23 @@
         </select>
         <p class="mt-1.5 text-[11.5px] text-slate-500">V3.B1 起支持多模板绑定，B1 完成前每通道仍为单模板。</p>
       </div>
-      <div class="psg-float-wrap">
-        <input type="number" id="cr" name="rate_per_min" value="60" min="0" placeholder="60" class="psg-float-input">
-        <label for="cr" class="psg-float-label">Rate per min (0 = 不限)</label>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="psg-float-wrap">
+          <input type="number" id="cr" name="rate_per_min" value="60" min="0" placeholder="60" class="psg-float-input">
+          <label for="cr" class="psg-float-label">Rate /min (0=不限)</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="number" id="cd" name="dedup_window_s" value="0" min="0" placeholder="0" class="psg-float-input">
+          <label for="cd" class="psg-float-label">Dedup 秒 (0=禁用)</label>
+        </div>
       </div>
-      <div class="psg-float-wrap">
-        <input type="number" id="cd" name="dedup_window_s" value="0" min="0" placeholder="0" class="psg-float-input">
-        <label for="cd" class="psg-float-label">Dedup window 秒 (0 = 禁用)</label>
-      </div>
-      <div class="sm:col-span-2 pt-2">
+      <div class="pt-2 flex items-center gap-2">
         <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建通道
           <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
         </button>
+        <button type="button" onclick="psgCloseDrawer('drawer-new-ch')" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
       </div>
     </form>
-  </section>
+  </div>
 </div>
 {{ template "layout-close" . }}{{ end }}
