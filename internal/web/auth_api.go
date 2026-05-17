@@ -45,9 +45,23 @@ func toTenantView(t *domain.Tenant) tenantView {
 }
 
 // installAuthAPIRoutes is invoked from server.go via the routes.go hook.
+// /auth/login and /auth/register are mounted under a dedicated
+// per-IP rate limiter (5 requests / minute, configurable via
+// cfg.Security.AuthRateLimit*). The global /api/* per-second budget
+// still applies, but the auth limiter is much tighter so brute-force
+// password sweeps trip a 429 long before they make a dent.
+//
+// Refs: round2-security-report S-L4.
 func installAuthAPIRoutes(r chi.Router, deps Deps) {
-	r.Post("/auth/register", apiRegister(deps))
-	r.Post("/auth/login", apiLogin(deps))
+	r.Group(func(auth chi.Router) {
+		// 5 reqs / minute / IP — tight credential-bearing limiter so
+		// dictionary sweeps hit 429 long before they make progress.
+		// (0, 0) opts into the AuthRateLimit defaults documented on the
+		// middleware constructor.
+		auth.Use(wmw.AuthRateLimit(0, 0))
+		auth.Post("/auth/register", apiRegister(deps))
+		auth.Post("/auth/login", apiLogin(deps))
+	})
 }
 
 func apiRegister(deps Deps) http.HandlerFunc {
