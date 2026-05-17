@@ -192,6 +192,21 @@ func (m *Manager) Start(ctx context.Context, bot *domain.Bot) error {
 	factory, ok := m.factories[bot.Platform]
 	if !ok {
 		m.mu.Unlock()
+		// Some platforms (currently Lark / 飞书 custom-bot webhooks)
+		// are push-only and intentionally have no Factory registered.
+		// Returning ErrUnknownPlatform here would surface as a startup
+		// "listener start failed" warn for every Lark bot in the DB —
+		// noisy and misleading because nothing is wrong. Silently skip
+		// with an INFO log so operators still see the row but no error
+		// bubbles up.
+		if isPushOnlyPlatform(bot.Platform) {
+			m.logger.Info("platform: bot has no listener support (push-only)",
+				"bot_id", bot.ID,
+				"tenant_id", bot.TenantID,
+				"platform", bot.Platform,
+				"bot_name", bot.Name)
+			return nil
+		}
 		return fmt.Errorf("%w: %q", ErrUnknownPlatform, bot.Platform)
 	}
 	// If there's already an entry for this bot, swap it out: stop it,
@@ -343,3 +358,28 @@ func (m *Manager) run(ctx context.Context, bot *domain.Bot, listener Listener, e
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// isPushOnlyPlatform reports whether bot.Platform refers to a chat
+// platform PulseGuard delivers messages to but does NOT (and cannot,
+// in the case of Lark custom-bot webhooks) drain inbound updates
+// from. The Manager uses this to distinguish "no Factory registered
+// because the platform is intentionally one-way" from "no Factory
+// registered because the platform is mis-configured".
+//
+// Currently:
+//   - domain.PlatformLark — Lark / 飞书 custom-bot webhooks. The
+//     remote side is incoming-only; there is no long-poll endpoint
+//     and no callback dispatch, so listener boot is skipped silently.
+//
+// New push-only platforms (Slack incoming-webhook, Discord webhook,
+// etc.) should add their identifier here. Bidirectional platforms
+// like Telegram MUST stay out so a missing Factory registration is
+// surfaced as a loud ErrUnknownPlatform instead of swallowed.
+func isPushOnlyPlatform(p string) bool {
+	switch p {
+	case domain.PlatformLark:
+		return true
+	default:
+		return false
+	}
+}

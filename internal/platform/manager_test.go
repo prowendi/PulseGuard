@@ -226,6 +226,42 @@ func TestManager_UnknownPlatformErr(t *testing.T) {
 	}
 }
 
+// TestManager_PushOnlyPlatformSilentSkip pins the L4 contract: push-
+// only platforms (currently Lark) without a registered Factory must
+// NOT bubble ErrUnknownPlatform — they silently return nil and leave
+// IsRunning(botID) false. This keeps Lark bot rows out of the
+// "listener start failed" warn-log spam every restart.
+func TestManager_PushOnlyPlatformSilentSkip(t *testing.T) {
+	// Only the telegram Factory is registered. A Lark bot must NOT
+	// produce an error here even though no listener exists for it.
+	tgFactory := &fakeFactory{platform: domain.PlatformTelegram}
+	mgr := NewManager(quietLogger(), tgFactory)
+	t.Cleanup(mgr.Shutdown)
+
+	larkBot := &domain.Bot{
+		ID:       42,
+		TenantID: 1,
+		Name:     "lark-push",
+		Platform: domain.PlatformLark,
+		Enabled:  true,
+	}
+	if err := mgr.Start(context.Background(), larkBot); err != nil {
+		t.Fatalf("Start(lark) err = %v want nil (silent skip)", err)
+	}
+	if mgr.IsRunning(larkBot.ID) {
+		t.Fatalf("listener marked running for push-only platform")
+	}
+	// And confirm the regression guard: a bot with a genuinely unknown
+	// platform (discord — not registered, not push-only) still errors
+	// loudly, so a typo in the bots.platform column cannot hide.
+	err := mgr.Start(context.Background(), &domain.Bot{
+		ID: 43, TenantID: 1, Name: "bad", Platform: "discord", Enabled: true,
+	})
+	if !errors.Is(err, ErrUnknownPlatform) {
+		t.Fatalf("expected ErrUnknownPlatform for genuinely unknown platform, got %v", err)
+	}
+}
+
 func TestManager_StartValidatesBot(t *testing.T) {
 	factory := &fakeFactory{platform: domain.PlatformTelegram}
 	mgr := NewManager(quietLogger(), factory)
