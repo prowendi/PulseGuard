@@ -60,6 +60,7 @@ func commandDemos() []commandDemo {
 func installCommandsUIRoutes(r chi.Router, deps Deps) {
 	r.Get("/commands", uiCommandList(deps))
 	r.Post("/commands", uiCommandCreate(deps))
+	r.Post("/commands/{id}/update", uiCommandUpdate(deps))
 	r.Post("/commands/{id}/delete", uiCommandDelete(deps))
 	r.Post("/commands/{id}/toggle", uiCommandToggle(deps))
 }
@@ -121,6 +122,51 @@ func uiCommandDelete(deps Deps) http.HandlerFunc {
 		}
 		tenant := wmw.Tenant(r.Context())
 		_ = deps.Commands.Delete(r.Context(), tenant.ID, id)
+		http.Redirect(w, r, "/ui/commands", http.StatusSeeOther)
+	}
+}
+
+// uiCommandUpdate handles inline edits from the shared edit-drawer.
+// The handler revalidates name/code/enabled, then patches the
+// command row. Listener subscribers are unaffected — they key on
+// (bot_id, chat_id, command_id) which stays stable across renames.
+func uiCommandUpdate(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !VerifyCSRF(r, deps.csrfSecret()) {
+			http.Error(w, "csrf", http.StatusForbidden)
+			return
+		}
+		id, ok := parsePathID(w, r, "id")
+		if !ok {
+			return
+		}
+		_ = r.ParseForm()
+		name := normalizeCommandName(r.PostForm.Get("name"))
+		desc := r.PostForm.Get("description")
+		code := r.PostForm.Get("code")
+		enabled := r.PostForm.Get("enabled") != ""
+		tenant := wmw.Tenant(r.Context())
+		if name == "" || strings.TrimSpace(code) == "" {
+			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: "name 与 code 不能为空"})
+			return
+		}
+		if len(code) > MaxCommandCodeBytes {
+			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: "code 超出 64 KiB 上限"})
+			return
+		}
+		cmd, err := deps.Commands.GetByID(r.Context(), tenant.ID, id)
+		if err != nil {
+			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: "命令不存在或不属于当前租户"})
+			return
+		}
+		cmd.Name = name
+		cmd.Description = desc
+		cmd.Code = code
+		cmd.Enabled = enabled
+		if err := deps.Commands.Update(r.Context(), cmd); err != nil {
+			renderCommandsPage(w, r, deps, tenant, &flash{Level: "error", Message: err.Error()})
+			return
+		}
 		http.Redirect(w, r, "/ui/commands", http.StatusSeeOther)
 	}
 }

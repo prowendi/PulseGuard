@@ -233,6 +233,34 @@
           }
           break;
         }
+        case "edit-command": {
+          // Hydrate the shared command edit drawer: name / description
+          // / code / enabled. Code roundtrips losslessly because
+          // html/template attribute-escapes newlines + quotes; the
+          // dataset reader recovers the original source verbatim.
+          e.preventDefault();
+          var dec = document.getElementById("drawer-edit-cmd");
+          if (!dec) return;
+          var def = dec.querySelector("form");
+          if (def) {
+            def.action = "/ui/commands/" + node.getAttribute("data-id") + "/update";
+          }
+          var setCmdVal = function (sel, v) {
+            var el = dec.querySelector(sel);
+            if (el) el.value = v == null ? "" : v;
+          };
+          setCmdVal('[name="name"]', node.getAttribute("data-name"));
+          setCmdVal('[name="description"]', node.getAttribute("data-description"));
+          setCmdVal('[name="code"]', node.getAttribute("data-code"));
+          var ecb = dec.querySelector('[name="enabled"]');
+          if (ecb) {
+            ecb.checked = node.getAttribute("data-enabled") === "1";
+          }
+          if (typeof window.psgOpenDrawer === "function") {
+            window.psgOpenDrawer("drawer-edit-cmd");
+          }
+          break;
+        }
         case "edit-bot": {
           // Shared edit-drawer for the bots page. Row carries data-id /
           // -name / -description / -platform. bot_token is intentionally
