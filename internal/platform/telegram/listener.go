@@ -447,8 +447,14 @@ func (l *Listener) publishCommands(ctx context.Context) error {
 
 // handle inspects a single update and replies if the user typed an
 // onboarding command, a custom command, or the bot was added to a
-// group.
+// group. V7-1 adds a callback_query path so inline-keyboard taps
+// (currently the "ack:<fingerprint>" convention) flow through the
+// same handler.
 func (l *Listener) handle(ctx context.Context, u update) {
+	if u.CallbackQuery != nil {
+		l.handleCallback(ctx, u.CallbackQuery)
+		return
+	}
 	msg := u.Message
 	if msg == nil {
 		return
@@ -755,6 +761,160 @@ func (l *Listener) recordError(kind string, err error) {
 	}
 }
 
+// handleCallback routes a Telegram callback_query update. V7-1 only
+// understands the "ack:<fingerprint>" data convention: when the user
+// taps the ACK inline button on an alert message we
+//   1. clear the loading spinner via answerCallbackQuery (always, so
+//      Telegram does not leave the button in "..." for 15 s);
+//   2. record the ack via the AlertAcker (if wired);
+//   3. echo "@user 已 ACK" into the original message via
+//      editMessageText so every chat participant sees the operator's
+//      claim immediately.
+//
+// Any other data string is silently ignored — Telegram still requires
+// us to call answerCallbackQuery, so we always close the spinner
+// even on the no-op path.
+func (l *Listener) handleCallback(ctx context.Context, cq *callbackQuery) {
+	if cq == nil {
+		return
+	}
+	defer l.answerCallback(ctx, cq.ID, "")
+
+	data := strings.TrimSpace(cq.Data)
+	if !strings.HasPrefix(data, "ack:") {
+		l.logger.Info("telegram: callback ignored (unknown prefix)",
+			"bot_id", l.botID, "data_len", len(data))
+		return
+	}
+	fp := strings.TrimSpace(strings.TrimPrefix(data, "ack:"))
+	if fp == "" {
+		return
+	}
+	if l.acker == nil {
+		l.logger.Info("telegram: callback ack received but acker not wired",
+			"bot_id", l.botID, "fp", fp)
+		return
+	}
+
+	var chatID int64
+	if cq.Message != nil {
+		chatID = cq.Message.Chat.ID
+	}
+	ackedBy := ackedByLabel(cq.From, chatID)
+	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	insertErr := l.acker.Insert(ackCtx, AckInput{
+		BotID:       l.dbBotID,
+		ChatID:      strconv.FormatInt(chatID, 10),
+		Fingerprint: fp,
+		AckedBy:     ackedBy,
+	})
+	switch {
+	case insertErr == nil, errors.Is(insertErr, ErrAckAlreadyExists):
+		// fresh ack OR duplicate — both proceed to the visual echo so
+		// the user gets attribution feedback either way.
+	default:
+		l.logger.Warn("telegram: callback ack insert failed",
+			"bot_id", l.botID, "fp", fp, "err", insertErr.Error())
+		return
+	}
+
+	if cq.Message == nil || cq.Message.MessageID == 0 {
+		return
+	}
+	original := cq.Message.Text
+	newText := original
+	if newText == "" {
+		newText = "Alert"
+	}
+	suffix := "\n\n" + ackedBy + " 已 ACK"
+	// Idempotent guard: if the suffix is already present we leave the
+	// body untouched — editing with the same text triggers Telegram's
+	// "message is not modified" 400 (which editMessageText below
+	// swallows anyway), but skipping the round-trip is cheaper.
+	if !strings.Contains(newText, suffix) {
+		newText = newText + suffix
+	}
+	editCtx, editCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer editCancel()
+	if err := l.editMessageText(editCtx, chatID, cq.Message.MessageID, newText); err != nil {
+		l.logger.Warn("telegram: callback edit failed",
+			"bot_id", l.botID, "fp", fp, "err", err.Error())
+	}
+}
+
+// answerCallback closes the loading spinner on the user's Telegram
+// client. Errors are logged but never propagate — the ack itself was
+// the load-bearing side effect.
+func (l *Listener) answerCallback(ctx context.Context, callbackID, text string) {
+	if callbackID == "" {
+		return
+	}
+	payload := map[string]any{"callback_query_id": callbackID}
+	if text != "" {
+		payload["text"] = text
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	u := l.apiBase + "/bot" + url.PathEscape(l.botToken) + "/answerCallbackQuery"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := l.httpC.Do(req)
+	if err != nil {
+		l.logger.Info("telegram: answerCallbackQuery transport failed",
+			"bot_id", l.botID, "err", err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		bs, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		l.logger.Info("telegram: answerCallbackQuery non-2xx",
+			"bot_id", l.botID, "status", resp.StatusCode, "body", string(bs))
+	}
+}
+
+// editMessageText rewrites the text of a previously sent Telegram
+// message. V7-1 uses this to echo "@user 已 ACK" into the alert body
+// without losing the original inline_keyboard (Telegram preserves the
+// existing reply_markup when the field is omitted).
+//
+// Telegram's "Bad Request: message is not modified" 400 is treated as
+// a silent success — the desired end state is already in place.
+func (l *Listener) editMessageText(ctx context.Context, chatID, messageID int64, text string) error {
+	body, err := json.Marshal(map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"text":       text,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	u := l.apiBase + "/bot" + url.PathEscape(l.botToken) + "/editMessageText"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := l.httpC.Do(req)
+	if err != nil {
+		return fmt.Errorf("transport: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		bs, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if strings.Contains(string(bs), "not modified") {
+			return nil
+		}
+		return fmt.Errorf("status %d: %s", resp.StatusCode, truncForLog(bs))
+	}
+	return nil
+}
+
 // replyText is the underlying sendMessage helper. Errors are logged
 // and never propagated so a transient TG hiccup cannot kill the loop.
 func (l *Listener) replyText(ctx context.Context, chatID int64, text string) {
@@ -821,12 +981,31 @@ type getUpdatesResponse struct {
 
 // update mirrors the fields of a Telegram Update we care about.
 type update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *message `json:"message,omitempty"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *message       `json:"message,omitempty"`
+	CallbackQuery *callbackQuery `json:"callback_query,omitempty"`
+}
+
+// callbackQuery captures the bare minimum fields V7-1 needs to honour
+// an inline-keyboard tap. ID identifies the query so we can clear the
+// "..." loading spinner in the user's Telegram client via
+// answerCallbackQuery. Data carries the button's callback_data string
+// — we use the "ack:<fingerprint>" convention so the listener can
+// route to the alert_acks insert + editMessageText echo.
+//
+// Message is the original message the button was attached to; the
+// listener uses Message.Chat.ID + Message.MessageID to drive the
+// editMessageText that prefixes "@user 已 ACK" to the alert body.
+type callbackQuery struct {
+	ID      string    `json:"id"`
+	From    *chatUser `json:"from,omitempty"`
+	Message *message  `json:"message,omitempty"`
+	Data    string    `json:"data,omitempty"`
 }
 
 type message struct {
 	Chat           chat       `json:"chat"`
+	MessageID      int64      `json:"message_id,omitempty"`
 	Text           string     `json:"text,omitempty"`
 	From           *chatUser  `json:"from,omitempty"`
 	NewChatMembers []chatUser `json:"new_chat_members,omitempty"`
@@ -846,12 +1025,14 @@ type chatUser struct {
 }
 
 // getUpdates issues a long-poll request. The "allowed_updates" filter
-// keeps Telegram from streaming us callback queries, edits, etc.
+// restricts Telegram's push to the two update kinds we actually
+// handle: text messages (onboarding + custom commands + V7 built-ins)
+// and callback queries (V7-1 inline-keyboard ACK button).
 func (l *Listener) getUpdates(ctx context.Context, offset int64) ([]update, error) {
 	q := url.Values{}
 	q.Set("offset", strconv.FormatInt(offset, 10))
 	q.Set("timeout", strconv.Itoa(longPollTimeoutSec))
-	q.Set("allowed_updates", `["message"]`)
+	q.Set("allowed_updates", `["message","callback_query"]`)
 	u := fmt.Sprintf("%s/bot%s/getUpdates?%s",
 		l.apiBase, url.PathEscape(l.botToken), q.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)

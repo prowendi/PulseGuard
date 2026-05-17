@@ -31,9 +31,11 @@ type PushOutbox struct {
 type LogStatus string
 
 const (
-	LogSent   LogStatus = "sent"
-	LogFailed LogStatus = "failed"
-	LogDead   LogStatus = "dead"
+	LogSent     LogStatus = "sent"
+	LogFailed   LogStatus = "failed"
+	LogDead     LogStatus = "dead"
+	LogSilenced LogStatus = "silenced" // V7-3: matched an active silence
+	LogEdited   LogStatus = "edited"   // V7-2: collapsed into an existing message_thread
 )
 
 type PushLog struct {
@@ -67,4 +69,21 @@ type PushRequest struct {
 	TenantID  int64
 	Payload   map[string]any
 	DedupKey  string // optional, from payload.dedup_key
+	Buttons   []PushButton
+}
+
+// PushButton is the domain shape carried inside a PushRequest /
+// pipeline payload via the `_buttons` JSON convention. The worker
+// projects it into tg.InlineButton when calling SendWithOpts so the
+// outbound Telegram message gets a single-row inline keyboard.
+//
+// Exactly one of Callback or URL should be set per button:
+//   - Callback fires a Telegram callback_query update; V7-1 uses the
+//     "ack:<fingerprint>" convention to drive the alert_acks insert
+//     and the editMessageText echo from the listener.
+//   - URL opens a browser tab in the user's Telegram client.
+type PushButton struct {
+	Text     string `json:"text"`
+	Callback string `json:"callback,omitempty"`
+	URL      string `json:"url,omitempty"`
 }

@@ -192,7 +192,19 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 	}
 
 	parseMode := string(tpl.ParseMode)
-	msgID, sendErr := w.deps.Sender.Send(ctx, bot.BotToken, ch.ChatID, parseMode, text)
+	// V7-1: extract optional inline keyboard from payload._buttons.
+	// The convention is "underscore prefix = pipeline directive, not
+	// template data" — same shape as _template_id / _template. Buttons
+	// are silently dropped when:
+	//   - the sender does not implement SenderWithOpts (legacy fake in
+	//     tests), so the fall-back to plain Send below preserves the
+	//     buttonless behaviour every existing test expects;
+	//   - the payload does not carry _buttons, so the buttons slice is
+	//     nil and SendWithOpts behaves identically to Send.
+	// Either path keeps the V7-1 change strictly additive for callers
+	// that have not opted in.
+	buttons := extractButtons(payload)
+	msgID, sendErr := w.dispatchSend(ctx, bot.BotToken, ch.ChatID, parseMode, text, buttons)
 	if sendErr == nil {
 		w.markSent(ctx, item, text, msgID)
 		return true, nil
@@ -389,6 +401,76 @@ func decodePayload(raw string) map[string]any {
 		return map[string]any{}
 	}
 	return m
+}
+
+// dispatchSend routes the outbound message through the buttons-aware
+// SenderWithOpts when the injected Sender implements it; otherwise it
+// falls back to the legacy Sender.Send so V7-1 stays a pure
+// extension. The fallback path also runs when buttons is empty — the
+// resulting Telegram body is byte-identical to the pre-V7 behaviour
+// so the existing happy-path tests keep their evidence value.
+func (w *Worker) dispatchSend(ctx context.Context, botToken, chatID, parseMode, text string, buttons []domain.PushButton) (int64, error) {
+	if len(buttons) == 0 {
+		return w.deps.Sender.Send(ctx, botToken, chatID, parseMode, text)
+	}
+	if sw, ok := w.deps.Sender.(domain.SenderWithOpts); ok {
+		return sw.SendWithOpts(ctx, botToken, chatID, parseMode, text, domain.SendOptions{Buttons: buttons})
+	}
+	// Sender does not understand buttons — log once at info so the
+	// operator notices the dropped markup, then fall back to a
+	// vanilla send so the alert still lands.
+	w.deps.Logger.Info("pipeline.worker buttons dropped (sender does not implement SenderWithOpts)",
+		"worker_id", w.cfg.WorkerID,
+		"button_count", len(buttons))
+	return w.deps.Sender.Send(ctx, botToken, chatID, parseMode, text)
+}
+
+// extractButtons projects payload["_buttons"] into a []domain.PushButton
+// the worker can hand to SendWithOpts. The wire format is a JSON array
+// of objects:
+//
+//	"_buttons": [
+//	  {"text": "ACK", "callback": "ack:db01-cpu"},
+//	  {"text": "Runbook", "url": "https://example.com/rb"}
+//	]
+//
+// Malformed entries are silently skipped — a typo must not crash the
+// pipeline; the operator will notice the missing button in the
+// rendered Telegram message. Returns nil when no buttons are present.
+func extractButtons(payload map[string]any) []domain.PushButton {
+	raw, ok := payload["_buttons"]
+	if !ok || raw == nil {
+		return nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]domain.PushButton, 0, len(arr))
+	for _, item := range arr {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		btn := domain.PushButton{}
+		if v, ok := obj["text"].(string); ok {
+			btn.Text = v
+		}
+		if v, ok := obj["callback"].(string); ok {
+			btn.Callback = v
+		}
+		if v, ok := obj["url"].(string); ok {
+			btn.URL = v
+		}
+		if btn.Text == "" || (btn.Callback == "" && btn.URL == "") {
+			continue
+		}
+		out = append(out, btn)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // pickTemplateID resolves which template the worker should render with.

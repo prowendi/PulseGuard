@@ -132,6 +132,32 @@ type Sender interface {
 	Send(ctx context.Context, botToken, chatID, parseMode, text string) (msgID int64, err error)
 }
 
+// SendOptions bundles optional per-call knobs the V7+ pipeline needs to
+// pass to the underlying Telegram client without changing the legacy
+// Sender contract. Buttons drives the inline_keyboard reply_markup
+// (V7-1).
+//
+// Implementations that do not understand a field are expected to
+// degrade to a vanilla sendMessage — callers must always tolerate
+// "buttons silently dropped" because tests substitute legacy Senders.
+type SendOptions struct {
+	Buttons []PushButton
+}
+
+// SenderWithOpts extends Sender with the V7-1 button-aware send. A
+// type assertion on the Sender dependency lets the worker keep the
+// existing interface for tests that pre-date inline_keyboard while
+// production wiring uses *tg.Client which satisfies both. EditMessage
+// powers the V7-2 state-machine collapse: when a push carries a
+// _fingerprint that already has a message_threads row the worker
+// rewrites the existing Telegram message in-place instead of sending
+// a new one.
+type SenderWithOpts interface {
+	Sender
+	SendWithOpts(ctx context.Context, botToken, chatID, parseMode, text string, opts SendOptions) (msgID int64, err error)
+	EditMessage(ctx context.Context, botToken, chatID string, messageID int64, parseMode, text string) error
+}
+
 // CommandRepo manages tenant-owned Starlark commands. GetByBotAndName
 // is the listener's hot-path resolver: it joins commands to bots via
 // the bots.tenant_id column so a listener can dispatch with just the

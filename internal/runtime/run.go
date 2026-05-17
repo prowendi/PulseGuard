@@ -135,8 +135,10 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	subscribers := store.NewSubscriberRepo(db, clock)
 	alertAcks := store.NewAlertAckRepo(db, clock)
 
-	// ── 4. Sender (real TG client, unless overridden by tests).
-	var sender domain.Sender = tg.New(cfg.Telegram)
+	// ── 4. Sender (real TG client wrapped in the V7-1/V7-2 adapter
+	// that exposes SendWithOpts + EditMessage on top of the legacy
+	// domain.Sender contract). Tests override with a plain Sender.
+	var sender domain.Sender = newTGSenderAdapter(tg.New(cfg.Telegram))
 	if ov.Sender != nil {
 		sender = ov.Sender
 	}

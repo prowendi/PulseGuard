@@ -41,6 +41,13 @@ type fakeTG struct {
 
 	getUpdatesCalls int32
 
+	// editCalls / answerCalls support the V7-1 callback_query tests
+	// without polluting the legacy fixture surface. editCalls captures
+	// raw editMessageText bodies so assertions can grep for the
+	// appended "已 ACK" suffix.
+	editCalls   []string
+	answerCalls int32
+
 	// setMyCommandsCalls captures every setMyCommands invocation so
 	// tests can assert that listener startup publishes the slash menu
 	// exactly once. Body is the raw POST payload as the listener sent
@@ -86,6 +93,23 @@ func (f *fakeTG) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.status)
 		_, _ = io.WriteString(w, resp.body)
+		return
+	}
+	if strings.Contains(r.URL.Path, "/editMessageText") {
+		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.editCalls = append(f.editCalls, string(body))
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":1}}`)
+		return
+	}
+	if strings.Contains(r.URL.Path, "/answerCallbackQuery") {
+		atomic.AddInt32(&f.answerCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
 		return
 	}
 	if strings.Contains(r.URL.Path, "/sendMessage") {
