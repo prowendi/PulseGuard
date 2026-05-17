@@ -154,6 +154,31 @@
           window.location.reload();
           break;
         }
+        case "edit-template": {
+          // Shared edit-drawer for the templates page. The trigger row
+          // carries data-id/-name/-parse-mode/-body; we hydrate the
+          // form fields, retarget the form action to the per-row update
+          // URL, then open the drawer. Body roundtrips losslessly via
+          // dataset because html/template attribute-escapes \n and ".
+          e.preventDefault();
+          var drawer = document.getElementById("drawer-edit-tpl");
+          if (!drawer) return;
+          var form = drawer.querySelector("form");
+          if (form) {
+            form.action = "/ui/templates/" + node.getAttribute("data-id") + "/update";
+          }
+          var setVal = function (sel, v) {
+            var el = drawer.querySelector(sel);
+            if (el) el.value = v || "";
+          };
+          setVal('[name="name"]', node.getAttribute("data-name"));
+          setVal('[name="parse_mode"]', node.getAttribute("data-parse-mode"));
+          setVal('[name="body"]', node.getAttribute("data-body"));
+          if (typeof window.psgOpenDrawer === "function") {
+            window.psgOpenDrawer("drawer-edit-tpl");
+          }
+          break;
+        }
         default:
           break;
       }

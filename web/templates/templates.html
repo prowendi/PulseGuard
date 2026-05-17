@@ -33,8 +33,15 @@
               <td class="px-5 py-3"><span class="text-slate-900 font-semibold dark:text-white">{{ .Name }}</span></td>
               <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">{{ .ParseMode }}</span></td>
               <td class="px-5 py-3"><pre class="text-[11.5px] text-slate-600 max-w-md max-h-20 overflow-hidden whitespace-pre-wrap font-mono dark:text-slate-300">{{ .Body }}</pre></td>
-              <td class="px-5 py-3 text-right">
-                <form method="POST" action="/ui/templates/{{ .ID }}/delete" data-confirm="确认删除？" class="inline">
+              <td class="px-5 py-3 text-right whitespace-nowrap">
+                <button type="button"
+                        data-action="edit-template"
+                        data-id="{{ .ID }}"
+                        data-name="{{ .Name }}"
+                        data-parse-mode="{{ .ParseMode }}"
+                        data-body="{{ .Body }}"
+                        class="inline-flex items-center gap-1 text-[12.5px] text-emerald-600 hover:text-emerald-700 font-medium hover:bg-emerald-50 px-2 py-1 rounded transition-colors dark:hover:bg-emerald-500/10">编辑</button>
+                <form method="POST" action="/ui/templates/{{ .ID }}/delete" data-confirm="确认删除？" class="inline ml-1">
                   <input type="hidden" name="csrf" value="{{ $csrf }}">
                   <button class="inline-flex items-center gap-1 text-[12.5px] text-rose-600 hover:text-rose-700 font-medium hover:bg-rose-50 px-2 py-1 rounded transition-colors">删除</button>
                 </form>
@@ -116,6 +123,48 @@
       <div class="pt-2 flex items-center gap-2">
         <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建模板</button>
         <button type="button" data-action="drawer-close" data-target="drawer-new-tpl" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Drawer: 编辑模板（共享，app.js 在点击编辑按钮时填充字段+改 action）====== -->
+<div id="drawer-edit-tpl" class="psg-drawer fixed inset-0 z-40 hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-edit-tpl-title">
+  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" data-action="drawer-close" data-target="drawer-edit-tpl"></div>
+  <div class="psg-drawer-panel absolute top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col translate-x-full transition-transform duration-300 ease-out dark:bg-slate-900 dark:ring-white/10">
+    <header class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div>
+        <h2 id="drawer-edit-tpl-title" class="text-base font-semibold text-slate-900 dark:text-white">编辑模板</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">修改后点保存；预解析失败的模板会被拒绝。</p>
+      </div>
+      <button type="button" data-action="drawer-close" data-target="drawer-edit-tpl" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
+    </header>
+    <form method="POST" action="/ui/templates" class="flex-1 overflow-y-auto p-6 space-y-4">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="psg-float-wrap">
+          <input type="text" id="ten" name="name" required maxlength="64" placeholder="alert-critical" class="psg-float-input">
+          <label for="ten" class="psg-float-label">名称</label>
+        </div>
+        <div>
+          <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">parse_mode</label>
+          <select name="parse_mode" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+            <option value="MarkdownV2">MarkdownV2</option>
+            <option value="HTML">HTML</option>
+            <option value="None">None</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Body</label>
+        <textarea name="body" required rows="18" class="psg-code-editor w-full block resize-y rounded-xl"></textarea>
+        <p class="mt-1.5 text-[11.5px] text-slate-500">保存后该模板下一次推送即生效。</p>
+      </div>
+      <div class="pt-2 flex items-center gap-2">
+        <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">保存修改</button>
+        <button type="button" data-action="drawer-close" data-target="drawer-edit-tpl" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
       </div>
     </form>
   </div>
