@@ -20,7 +20,7 @@ func EnsureCSRFCookie(deps Deps) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only authenticated requests get an auto-issued token.
 			if sess := wmw.Session(r.Context()); sess != nil {
-				if _, err := r.Cookie(CookieCSRF); err != nil {
+				if _, ok := lookupCSRFCookie(r); !ok {
 					IssueCSRF(w, sess.ID, deps.csrfSecret(), deps.cookieSecure())
 				}
 			}

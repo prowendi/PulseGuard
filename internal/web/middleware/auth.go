@@ -10,8 +10,16 @@ import (
 	"github.com/wendi/pulseguard/internal/domain"
 )
 
-// CookieSession is the cookie name carrying the session id.
+// CookieSession is the legacy (non-secure) cookie name carrying the
+// session id. When the server runs with cookie_secure=true the handler
+// layer instead writes "__Host-psg_session"; readSessionCookie tries
+// both so the middleware does not need to know the deployment posture.
 const CookieSession = "psg_session"
+
+// CookieSessionHost is the secure-mode counterpart with the
+// browser-enforced __Host- prefix. Mirrors web.SessionCookieName(true);
+// duplicated here so the middleware package stays import-cycle free.
+const CookieSessionHost = "__Host-psg_session"
 
 // RequireAuth resolves the session cookie via the supplied auth.Service.
 // On success the active tenant and session are attached to ctx; on
@@ -62,12 +70,19 @@ func RequireAdmin() func(http.Handler) http.Handler {
 	}
 }
 
+// readSessionCookie returns the session id from whichever variant of
+// the cookie the browser sent. We try the strict __Host- name first
+// because in production both variants may briefly coexist after a
+// CookieSecure flip; preferring the strict one ensures cookie-toss
+// attempts on the legacy name cannot win.
 func readSessionCookie(r *http.Request) string {
-	c, err := r.Cookie(CookieSession)
-	if err != nil || c.Value == "" {
-		return ""
+	if c, err := r.Cookie(CookieSessionHost); err == nil && c.Value != "" {
+		return c.Value
 	}
-	return c.Value
+	if c, err := r.Cookie(CookieSession); err == nil && c.Value != "" {
+		return c.Value
+	}
+	return ""
 }
 
 func rejectUnauth(w http.ResponseWriter, r *http.Request) {

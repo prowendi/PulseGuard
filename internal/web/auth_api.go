@@ -135,26 +135,30 @@ func apiMe(deps Deps) http.HandlerFunc {
 }
 
 // setSessionCookie writes the psg_session cookie sized to the session's
-// expiry. HttpOnly is mandatory; Secure follows config.
+// expiry. HttpOnly is mandatory; Secure follows config. When CookieSecure
+// is on the cookie name carries the browser-enforced __Host- prefix so a
+// sibling subdomain cannot toss in a forged session id.
 func setSessionCookie(w http.ResponseWriter, sess *domain.Session, deps Deps) {
+	secure := deps.cookieSecure()
 	http.SetCookie(w, &http.Cookie{
-		Name:     wmw.CookieSession,
+		Name:     SessionCookieName(secure),
 		Value:    sess.ID,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   deps.cookieSecure(),
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  sess.ExpiresAt,
 	})
 }
 
 func clearSessionCookie(w http.ResponseWriter, deps Deps) {
+	secure := deps.cookieSecure()
 	http.SetCookie(w, &http.Cookie{
-		Name:     wmw.CookieSession,
+		Name:     SessionCookieName(secure),
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   deps.cookieSecure(),
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

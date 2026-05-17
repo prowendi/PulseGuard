@@ -26,10 +26,27 @@ import (
 // it here (rather than importing the outer web package) to keep this
 // package import-cycle free. Refs: round2-security-report S2-M3.
 const (
-	cookieCSRF   = "psg_csrf"
-	headerCSRF   = "X-CSRF-Token"
-	csrfTokenSep = "."
+	// cookieCSRF is the legacy (non-secure) CSRF cookie name. In
+	// secure-mode deployments the handler layer writes the
+	// __Host- prefixed variant instead; readCSRFCookie tries both.
+	cookieCSRF     = "psg_csrf"
+	cookieCSRFHost = "__Host-psg_csrf"
+	headerCSRF     = "X-CSRF-Token"
+	csrfTokenSep   = "."
 )
+
+// readCSRFCookie returns the value of whichever variant of the CSRF
+// cookie the browser sent. Prefers the strict __Host- name so a
+// cookie-toss on the legacy name cannot win during a transition.
+func readCSRFCookie(r *http.Request) (string, bool) {
+	if c, err := r.Cookie(cookieCSRFHost); err == nil && c.Value != "" {
+		return c.Value, true
+	}
+	if c, err := r.Cookie(cookieCSRF); err == nil && c.Value != "" {
+		return c.Value, true
+	}
+	return "", false
+}
 
 func CSRFCheck(secret []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -40,8 +57,8 @@ func CSRFCheck(secret []byte) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			cookie, err := r.Cookie(cookieCSRF)
-			if err != nil || cookie.Value == "" {
+			cookieVal, ok := readCSRFCookie(r)
+			if !ok {
 				writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "missing csrf cookie")
 				return
 			}
@@ -57,7 +74,7 @@ func CSRFCheck(secret []byte) func(http.Handler) http.Handler {
 			}
 			// 1. Header/cookie must match (constant time). Catches the
 			//    "attacker has only one of them" case.
-			if subtle.ConstantTimeCompare([]byte(tok), []byte(cookie.Value)) != 1 {
+			if subtle.ConstantTimeCompare([]byte(tok), []byte(cookieVal)) != 1 {
 				writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "csrf token mismatch")
 				return
 			}
@@ -71,7 +88,7 @@ func CSRFCheck(secret []byte) func(http.Handler) http.Handler {
 			if sess := Session(r.Context()); sess != nil {
 				sessionID = sess.ID
 			}
-			if !verifyCSRFTokenHMAC(cookie.Value, sessionID, secret) {
+			if !verifyCSRFTokenHMAC(cookieVal, sessionID, secret) {
 				writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "csrf token invalid")
 				return
 			}

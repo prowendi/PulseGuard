@@ -184,11 +184,8 @@ func authFlashMessage(err error) string {
 }
 
 func readCSRFCookie(r *http.Request) string {
-	c, err := r.Cookie(CookieCSRF)
-	if err != nil {
-		return ""
-	}
-	return c.Value
+	v, _ := lookupCSRFCookie(r)
+	return v
 }
 
 // installAuthUIRoutes wires the public auth UI endpoints onto the

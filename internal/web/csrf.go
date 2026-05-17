@@ -12,7 +12,10 @@ import (
 	wmw "github.com/wendi/pulseguard/internal/web/middleware"
 )
 
-// CookieCSRF is the cookie name carrying the CSRF token.
+// CookieCSRF is the legacy (non-secure) CSRF cookie name. When the
+// server runs with cookie_secure=true the handler writes the
+// `__Host-psg_csrf` variant instead (see web.CSRFCookieName). Lookup
+// helpers must try both during a transition.
 const CookieCSRF = "psg_csrf"
 
 // HeaderCSRF is the header name HTMX (and JSON clients) must echo.
@@ -42,11 +45,15 @@ func sessionIDFromRequest(r *http.Request) string {
 // safer than the prior pure-random token because the HMAC tag prevents
 // a cookie-injection attacker from forging a matching header.
 //
-// Refs: security-report S-M2.
+// The cookie name carries the `__Host-` prefix when secure is true so
+// browsers enforce Secure + Path=/ + no Domain (RFC 6265bis §4.1.3.2),
+// closing the cookie-toss vector from sibling subdomains.
+//
+// Refs: security-report S-M2, round2-security-report S2-L2.
 func IssueCSRF(w http.ResponseWriter, sessionID string, secret []byte, secure bool) string {
 	tok := mintCSRFToken(sessionID, secret)
 	http.SetCookie(w, &http.Cookie{
-		Name:     CookieCSRF,
+		Name:     CSRFCookieName(secure),
 		Value:    tok,
 		Path:     "/",
 		HttpOnly: false,
@@ -85,10 +92,12 @@ func VerifyCSRFToken(token, sessionID string, secret []byte) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
-// ClearCSRF removes the CSRF cookie (logout flow).
+// ClearCSRF removes the CSRF cookie (logout flow). MaxAge=-1 deletes
+// whichever variant of the cookie name was previously installed for
+// this deployment posture.
 func ClearCSRF(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     CookieCSRF,
+		Name:     CSRFCookieName(secure),
 		Value:    "",
 		Path:     "/",
 		HttpOnly: false,
@@ -104,14 +113,17 @@ func ClearCSRF(w http.ResponseWriter, secure bool) {
 // Returns false on any mismatch (a 403 should follow).
 //
 // Only state-mutating methods (POST/PUT/DELETE/PATCH) need verification.
+// The cookie is looked up under both the strict `__Host-` name and the
+// legacy plain name so the function works regardless of deployment
+// posture.
 func VerifyCSRF(r *http.Request, secret []byte) bool {
 	switch r.Method {
 	case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
 	default:
 		return true
 	}
-	cookie, err := r.Cookie(CookieCSRF)
-	if err != nil || cookie.Value == "" {
+	cookieVal, ok := lookupCSRFCookie(r)
+	if !ok {
 		return false
 	}
 	header := r.Header.Get(HeaderCSRF)
@@ -124,7 +136,7 @@ func VerifyCSRF(r *http.Request, secret []byte) bool {
 	if header == "" {
 		return false
 	}
-	if subtle.ConstantTimeCompare([]byte(header), []byte(cookie.Value)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(header), []byte(cookieVal)) != 1 {
 		return false
 	}
 	// Bind to session: rebuild the expected HMAC from the session id
@@ -135,7 +147,21 @@ func VerifyCSRF(r *http.Request, secret []byte) bool {
 	if sess := wmw.Session(r.Context()); sess != nil {
 		sessionID = sess.ID
 	}
-	return VerifyCSRFToken(cookie.Value, sessionID, secret)
+	return VerifyCSRFToken(cookieVal, sessionID, secret)
+}
+
+// lookupCSRFCookie returns the request's CSRF cookie value under
+// whichever variant of the name (legacy or __Host-prefixed) is present.
+// Prefer the strict variant so a cookie-toss on the legacy name during
+// a transition cannot win.
+func lookupCSRFCookie(r *http.Request) (string, bool) {
+	if c, err := r.Cookie(hostPrefix + csrfCookieBase); err == nil && c.Value != "" {
+		return c.Value, true
+	}
+	if c, err := r.Cookie(CookieCSRF); err == nil && c.Value != "" {
+		return c.Value, true
+	}
+	return "", false
 }
 
 // randomURLToken returns base64url(rand(n)) without padding.
