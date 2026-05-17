@@ -6,63 +6,81 @@
       <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">命令</h1>
       <p class="mt-1 text-sm text-slate-500">在 Telegram 私聊里给 bot 发送 <code class="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[12px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">/&lt;name&gt; [args...]</code> 即触发本 Starlark 脚本，结果回传给用户。</p>
     </div>
-    <a href="#new-cmd" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
+    <button type="button" onclick="psgOpenDrawer('drawer-new-cmd')" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       新建命令
-    </a>
+    </button>
   </header>
 
-  <div id="new-cmd" class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
     <section class="xl:col-span-2 bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
       <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
-        <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">新建命令</h2>
+        <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">已配置命令</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">共 {{ len .Commands }} 个</p>
       </header>
-      <form method="POST" action="/ui/commands" class="p-6 space-y-4">
-        <input type="hidden" name="csrf" value="{{ .CSRF }}">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div class="psg-float-wrap">
-            <input type="text" id="cmn" name="name" required maxlength="64" placeholder="echo" class="psg-float-input font-mono">
-            <label for="cmn" class="psg-float-label">命令名（不含 / 前缀）</label>
-          </div>
-          <div class="psg-float-wrap">
-            <input type="text" id="cmd" name="description" maxlength="200" placeholder="可选描述" class="psg-float-input">
-            <label for="cmd" class="psg-float-label">描述</label>
-          </div>
-        </div>
-        <div>
-          <div class="flex items-center justify-between mb-1.5">
-            <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Starlark 代码 <span class="ml-1 text-slate-400 normal-case tracking-normal">— 必须定义 <code class="px-1 py-0.5 rounded bg-slate-100 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">handle(args)</code> 函数</span></label>
-            <div class="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono">
-              <span class="inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
-              <span class="inline-flex h-2 w-2 rounded-full bg-amber-400"></span>
-              <span class="inline-flex h-2 w-2 rounded-full bg-rose-400"></span>
-              <span class="ml-1.5">starlark.py</span>
-            </div>
-          </div>
-          <textarea id="command-code" name="code" required rows="14" class="psg-code-editor w-full resize-y" placeholder="def handle(args):&#10;    return &quot;hello, &quot; + &quot; &quot;.join(args)"></textarea>
-        </div>
-        <label class="inline-flex items-center gap-2 text-[13px] text-slate-700 dark:text-slate-300">
-          <input type="checkbox" name="enabled" value="1" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500/30">
-          创建后立即启用
-        </label>
-        <div>
-          <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建命令</button>
-        </div>
-      </form>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50/80 sticky top-0 backdrop-blur dark:bg-slate-900/80">
+            <tr class="text-left">
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-12">#</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">命令</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">描述</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">状态</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">更新时间</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+            {{ range .Commands }}
+            <tr class="hover:bg-slate-50/70 transition-colors dark:hover:bg-slate-800/40">
+              <td class="px-5 py-3 font-mono text-[12px] text-slate-400">#{{ .ID }}</td>
+              <td class="px-5 py-3 font-mono text-slate-900 font-semibold dark:text-white">/{{ .Name }}</td>
+              <td class="px-5 py-3 text-slate-500">{{ .Description }}</td>
+              <td class="px-5 py-3">{{ if .Enabled }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>启用</span>{{ else }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 ring-1 ring-slate-200"><span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>禁用</span>{{ end }}</td>
+              <td class="px-5 py-3 text-slate-500 font-mono text-[12px]">{{ .UpdatedAt }}</td>
+              <td class="px-5 py-3 text-right whitespace-nowrap">
+                <div class="relative inline-block text-left">
+                  <button type="button" data-psg-toggle="cmd-menu-{{ .ID }}" aria-expanded="false" class="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors dark:hover:bg-slate-800 dark:text-slate-400 dark:hover:text-white">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+                  </button>
+                  <div id="cmd-menu-{{ .ID }}" data-psg-popover class="hidden absolute right-0 top-full mt-1 w-44 rounded-xl bg-white shadow-lg ring-1 ring-slate-900/5 border border-slate-100 py-1 z-30 dark:bg-slate-900 dark:ring-white/10 dark:border-slate-800">
+                    <form method="POST" action="/ui/commands/{{ .ID }}/toggle" class="block">
+                      <input type="hidden" name="csrf" value="{{ $.CSRF }}">
+                      <button type="submit" class="w-full text-left flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-slate-700 hover:bg-slate-50 transition-colors dark:text-slate-200 dark:hover:bg-slate-800">
+                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10M19 12a7 7 0 1 1-14 0"/></svg>
+                        {{ if .Enabled }}禁用{{ else }}启用{{ end }}
+                      </button>
+                    </form>
+                    <form method="POST" action="/ui/commands/{{ .ID }}/delete" class="block" onsubmit="return confirm('确认删除命令 /{{ .Name }} ?');">
+                      <input type="hidden" name="csrf" value="{{ $.CSRF }}">
+                      <button type="submit" class="w-full text-left flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-rose-600 hover:bg-rose-50 transition-colors dark:hover:bg-rose-500/10">
+                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                        删除命令
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            {{ end }}
+            {{ if not .Commands }}<tr><td colspan="6" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无命令" "从右侧 Demo Gallery 复制一段范例上手，或点击新建按钮在编辑器中手写。" "javascript:psgOpenDrawer('drawer-new-cmd')" "立即创建") }}</td></tr>{{ end }}
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <aside class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
       <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
         <div class="inline-flex items-center gap-2 rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider">GALLERY</div>
         <h2 class="mt-2 text-[15px] font-semibold text-slate-900 dark:text-white">Demo 范例</h2>
-        <p class="mt-0.5 text-[12px] text-slate-500">复制到编辑器即可上手。</p>
+        <p class="mt-0.5 text-[12px] text-slate-500">复制到编辑器自动打开 drawer。</p>
       </header>
       <div class="p-5 space-y-3">
         {{ range .Demos }}
         <div class="border border-slate-200 rounded-xl overflow-hidden hover:border-emerald-300 transition-colors group dark:border-slate-700 dark:hover:border-emerald-500/50">
           <div class="px-3 py-2 flex items-center justify-between bg-slate-50 border-b border-slate-200 dark:bg-slate-900/60 dark:border-slate-800">
             <span class="text-[13px] font-semibold text-slate-900 dark:text-white">{{ .Title }}</span>
-            <button type="button" class="text-[11.5px] text-emerald-600 hover:text-emerald-700 font-semibold group-hover:underline" onclick="document.getElementById('command-code').value = {{ .Code | js }}; document.getElementById('command-code').focus();">复制到编辑器</button>
+            <button type="button" class="text-[11.5px] text-emerald-600 hover:text-emerald-700 font-semibold group-hover:underline" onclick="document.getElementById('command-code').value = {{ .Code | js }}; psgOpenDrawer('drawer-new-cmd'); document.getElementById('command-code').focus();">复制到编辑器</button>
           </div>
           <div class="px-3 py-2 text-[11.5px] text-slate-500">{{ .Description }}</div>
           <pre class="px-3 py-2 text-[10.5px] font-mono text-slate-200 bg-slate-900 whitespace-pre-wrap max-h-32 overflow-y-auto">{{ .Code }}</pre>
@@ -71,61 +89,54 @@
       </div>
     </aside>
   </div>
+</div>
 
-  <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
-    <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
-      <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">已配置命令</h2>
-      <p class="mt-0.5 text-[12px] text-slate-500">共 {{ len .Commands }} 个</p>
+<!-- Drawer: 新建命令 ==================================================== -->
+<div id="drawer-new-cmd" class="psg-drawer fixed inset-0 z-40 hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-new-cmd-title">
+  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" onclick="psgCloseDrawer('drawer-new-cmd')"></div>
+  <div class="psg-drawer-panel absolute top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col translate-x-full transition-transform duration-300 ease-out dark:bg-slate-900 dark:ring-white/10">
+    <header class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div>
+        <h2 id="drawer-new-cmd-title" class="text-base font-semibold text-slate-900 dark:text-white">新建命令</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">Starlark 必须定义 <code class="px-1 py-0.5 rounded bg-slate-100 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">handle(args)</code>。</p>
+      </div>
+      <button type="button" onclick="psgCloseDrawer('drawer-new-cmd')" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
     </header>
-    <div class="overflow-x-auto">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50/80 sticky top-0 backdrop-blur dark:bg-slate-900/80">
-          <tr class="text-left">
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-12">#</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">命令</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">描述</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">状态</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">更新时间</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider text-right">操作</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-          {{ range .Commands }}
-          <tr class="hover:bg-slate-50/70 transition-colors dark:hover:bg-slate-800/40">
-            <td class="px-5 py-3 font-mono text-[12px] text-slate-400">#{{ .ID }}</td>
-            <td class="px-5 py-3 font-mono text-slate-900 font-semibold dark:text-white">/{{ .Name }}</td>
-            <td class="px-5 py-3 text-slate-500">{{ .Description }}</td>
-            <td class="px-5 py-3">{{ if .Enabled }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>启用</span>{{ else }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 ring-1 ring-slate-200"><span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>禁用</span>{{ end }}</td>
-            <td class="px-5 py-3 text-slate-500 font-mono text-[12px]">{{ .UpdatedAt }}</td>
-            <td class="px-5 py-3 text-right whitespace-nowrap">
-              <div class="relative inline-block text-left">
-                <button type="button" data-psg-toggle="cmd-menu-{{ .ID }}" aria-expanded="false" class="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors dark:hover:bg-slate-800 dark:text-slate-400 dark:hover:text-white">
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
-                </button>
-                <div id="cmd-menu-{{ .ID }}" data-psg-popover class="hidden absolute right-0 top-full mt-1 w-44 rounded-xl bg-white shadow-lg ring-1 ring-slate-900/5 border border-slate-100 py-1 z-30 dark:bg-slate-900 dark:ring-white/10 dark:border-slate-800">
-                  <form method="POST" action="/ui/commands/{{ .ID }}/toggle" class="block">
-                    <input type="hidden" name="csrf" value="{{ $.CSRF }}">
-                    <button type="submit" class="w-full text-left flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-slate-700 hover:bg-slate-50 transition-colors dark:text-slate-200 dark:hover:bg-slate-800">
-                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10M19 12a7 7 0 1 1-14 0"/></svg>
-                      {{ if .Enabled }}禁用{{ else }}启用{{ end }}
-                    </button>
-                  </form>
-                  <form method="POST" action="/ui/commands/{{ .ID }}/delete" class="block" onsubmit="return confirm('确认删除命令 /{{ .Name }} ?');">
-                    <input type="hidden" name="csrf" value="{{ $.CSRF }}">
-                    <button type="submit" class="w-full text-left flex items-center gap-2 px-3 py-1.5 text-[12.5px] text-rose-600 hover:bg-rose-50 transition-colors dark:hover:bg-rose-500/10">
-                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                      删除命令
-                    </button>
-                  </form>
-                </div>
-              </div>
-            </td>
-          </tr>
-          {{ end }}
-          {{ if not .Commands }}<tr><td colspan="6" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无命令" "从右上方 Demo Gallery 复制一段范例上手，或在编辑器中手写。" "#new-cmd" "立即创建") }}</td></tr>{{ end }}
-        </tbody>
-      </table>
-    </div>
-  </section>
+    <form method="POST" action="/ui/commands" class="flex-1 overflow-y-auto p-6 space-y-4">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="psg-float-wrap">
+          <input type="text" id="cmn" name="name" required maxlength="64" placeholder="echo" class="psg-float-input font-mono">
+          <label for="cmn" class="psg-float-label">命令名（不含 / 前缀）</label>
+        </div>
+        <div class="psg-float-wrap">
+          <input type="text" id="cmd" name="description" maxlength="200" placeholder="可选描述" class="psg-float-input">
+          <label for="cmd" class="psg-float-label">描述</label>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Starlark 代码</label>
+          <div class="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono">
+            <span class="inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
+            <span class="inline-flex h-2 w-2 rounded-full bg-amber-400"></span>
+            <span class="inline-flex h-2 w-2 rounded-full bg-rose-400"></span>
+            <span class="ml-1.5">starlark.py</span>
+          </div>
+        </div>
+        <textarea id="command-code" name="code" required rows="16" class="psg-code-editor w-full resize-y" placeholder="def handle(args):&#10;    return &quot;hello, &quot; + &quot; &quot;.join(args)"></textarea>
+      </div>
+      <label class="inline-flex items-center gap-2 text-[13px] text-slate-700 dark:text-slate-300">
+        <input type="checkbox" name="enabled" value="1" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500/30">
+        创建后立即启用
+      </label>
+      <div class="pt-2 flex items-center gap-2">
+        <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建命令</button>
+        <button type="button" onclick="psgCloseDrawer('drawer-new-cmd')" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
+      </div>
+    </form>
+  </div>
 </div>
 {{ template "layout-close" . }}{{ end }}
