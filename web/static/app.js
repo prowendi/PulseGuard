@@ -616,6 +616,23 @@
   window.psgOpenDrawer = function (id) {
     var el = document.getElementById(id);
     if (!el) return;
+    // Mutual exclusion: close every OTHER open drawer synchronously
+    // before this one slides in. Without this, an operator who clicks
+    // "edit" and then "new" sees both drawers + both backdrops layered
+    // on top of each other. We skip the animation on the displaced
+    // drawer (snap to closed) so the new one slides in cleanly without
+    // a 300ms visual collision.
+    document.querySelectorAll(".psg-drawer:not(.hidden)").forEach(function (other) {
+      if (other === el) return;
+      other.classList.add("hidden");
+      var op = other.querySelector(".psg-drawer-panel");
+      if (op) op.classList.add("translate-x-full");
+      var ob = other.querySelector(".psg-drawer-backdrop");
+      if (ob) {
+        ob.classList.remove("opacity-100");
+        ob.classList.add("opacity-0");
+      }
+    });
     el.classList.remove("hidden");
     // Force reflow so the subsequent class change triggers a transition
     // rather than a synchronous paint (otherwise the slide is invisible
