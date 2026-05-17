@@ -8,10 +8,18 @@ import (
 	"errors"
 	"fmt"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/wendi/pulseguard/internal/config"
 	"github.com/wendi/pulseguard/internal/domain"
 	"github.com/wendi/pulseguard/internal/store"
 )
+
+// dummyBcryptHash was an early packaging of the timing pad; the pad is
+// now per-Service (see Service.timingPad) so its cost can mirror
+// cfg.BcryptCost. This package-level placeholder is intentionally left
+// out — no package-level state is needed.
+
 
 // Service orchestrates registration, login, session lifecycle, and invite
 // code generation. It depends only on domain repository interfaces so it
@@ -25,6 +33,13 @@ type Service struct {
 	sessions *store.SessionRepo
 	cfg      config.Security
 	clock    domain.Clock
+	// timingPad is a bcrypt hash generated at construction time using
+	// the same cost as production hashes (cfg.BcryptCost). Login uses
+	// it on the email-unknown / disabled-tenant branches so the wall
+	// clock cost of a Login call is dominated by exactly one bcrypt
+	// CompareHashAndPassword regardless of which branch fires. This
+	// closes the timing oracle described in security-report S-L1.
+	timingPad []byte
 }
 
 // New constructs a Service. The repo arguments are concrete store
@@ -38,7 +53,33 @@ func New(
 	cfg config.Security,
 	clock domain.Clock,
 ) *Service {
-	return &Service{db: db, tenants: tenants, invites: invites, sessions: sessions, cfg: cfg, clock: clock}
+	return &Service{
+		db:        db,
+		tenants:   tenants,
+		invites:   invites,
+		sessions: sessions,
+		cfg:       cfg,
+		clock:     clock,
+		timingPad: mustTimingPad(cfg.BcryptCost),
+	}
+}
+
+// mustTimingPad generates the dummy bcrypt hash used by Login on the
+// not-found branches. We pin the cost to cfg.BcryptCost (falling back
+// to bcrypt.DefaultCost when unset / out of range) so the pad's
+// CompareHash takes the same wall-clock time as a real comparison.
+// Generation cannot reasonably fail (cost-bound errors and
+// password-length errors only); panicking here is appropriate because
+// running without the pad re-introduces the timing oracle.
+func mustTimingPad(cost int) []byte {
+	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
+		cost = bcrypt.DefaultCost
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte("pulseguard-timing-pad"), cost)
+	if err != nil {
+		panic(fmt.Sprintf("auth: cannot generate timing pad bcrypt hash: %v", err))
+	}
+	return h
 }
 
 // Register creates a brand-new tenant after consuming an invite code.
@@ -122,20 +163,34 @@ func (s *Service) Register(ctx context.Context, email, password, inviteCode stri
 	return tenant, sess, nil
 }
 
-// Login verifies credentials and issues a fresh session. Bad email/password
-// both return ErrUnauthorized (no enumeration leak).
+// dummyBcryptHash is reserved for a future fallback if Service.timingPad
+// is ever nil; currently Login uses Service.timingPad directly.
+// Kept as a package-level placeholder to make the rationale explicit.
+
 func (s *Service) Login(ctx context.Context, email, password string) (*domain.Session, error) {
 	if email == "" || password == "" {
+		// Even with empty input we still pay the bcrypt cost to keep
+		// "missing field" indistinguishable from "wrong creds" by wall
+		// clock; the early return below the compare keeps semantics
+		// unchanged.
+		_ = bcrypt.CompareHashAndPassword(s.timingPad, []byte("x"))
 		return nil, domain.ErrUnauthorized
 	}
 	tenant, err := s.tenants.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
+			// Equal-cost pad: spend one bcrypt comparison so the
+			// elapsed time of this branch matches the
+			// "email-exists-but-wrong-password" branch below.
+			_ = bcrypt.CompareHashAndPassword(s.timingPad, []byte(password))
 			return nil, domain.ErrUnauthorized
 		}
 		return nil, fmt.Errorf("lookup tenant: %w", err)
 	}
 	if tenant.Status != domain.TenantActive {
+		// Same pad here: the "disabled tenant" branch must not return
+		// faster than the wrong-password branch either.
+		_ = bcrypt.CompareHashAndPassword(s.timingPad, []byte(password))
 		return nil, domain.ErrUnauthorized
 	}
 	if err := CompareHashAndPassword([]byte(tenant.PasswordHash), password); err != nil {
