@@ -1,26 +1,177 @@
-/* PulseGuard prose supplements layered on top of Tailwind utilities.
-   Keep this file small — anything that can be a utility class belongs
-   in the template, not here. */
+/* PulseGuard supplemental styles. Tailwind owns the utility layer; this
+   file only carries: (1) font stack tuning so CJK fallback is consistent
+   under static-only deploys, (2) prose body for raw template previews,
+   (3) HTMX motion-reduce honouring, (4) toast animation keyframes
+   triggered by app.js, (5) a couple of micro-affordances that would be
+   awkward to express as utility chains (caret colour, scrollbar). */
+
+:root {
+  --psg-brand: #059669;
+  --psg-brand-soft: rgba(16, 185, 129, 0.12);
+  --psg-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+code, kbd, pre, samp, .font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-ligatures: none;
+}
+input, textarea, select, button { font-family: inherit; }
+
+/* Subtle scrollbar so panels feel polished on dark mode + Win/Chrome. */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.35); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background-color: rgba(100, 116, 139, 0.55); background-clip: padding-box; }
+
+/* Caret + selection accents on inputs. */
+input, textarea, select { caret-color: var(--psg-brand); }
+
+/* Prose for raw rendered template / log output. */
 .prose-body pre {
-  background: #f3f4f6;
-  padding: 12px 14px;
-  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 14px 16px;
+  border-radius: 10px;
   overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.5;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
 }
-.prose-body code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.9em;
-}
+.prose-body code { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.9em; }
+
 /* Honour browser-level reduced motion for HTMX swap transitions. */
 @media (prefers-reduced-motion: reduce) {
   .htmx-swapping, .htmx-settling { transition: none !important; }
+  .psg-toast { animation: none !important; }
 }
-/* Body uses Tailwind's default sans-serif stack but ensure the CJK
-   fallback is in there for /static-only deployments where the OS font
-   stack may not interpolate Noto Sans SC cleanly. */
-body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-  Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei",
-  "Hiragino Sans GB", sans-serif; }
+
+/* Floating-label input affordance: label slides up & shrinks when input
+   has focus or already carries a value (sibling state via :placeholder-shown). */
+.psg-float-wrap { position: relative; }
+.psg-float-input {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(203 213 225);
+  background: #fff;
+  padding: 1.15rem 0.85rem 0.4rem;
+  font-size: 0.875rem;
+  color: rgb(15 23 42);
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+.psg-float-input::placeholder { color: transparent; }
+.psg-float-input:focus { border-color: rgb(16 185 129); box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15); }
+.dark .psg-float-input { background: rgb(15 23 42 / 0.7); border-color: rgb(51 65 85); color: rgb(226 232 240); }
+.psg-float-label {
+  position: absolute;
+  left: 0.9rem;
+  top: 0.75rem;
+  font-size: 0.8rem;
+  color: rgb(100 116 139);
+  pointer-events: none;
+  transition: transform 150ms ease, font-size 150ms ease, color 150ms ease, top 150ms ease;
+  background: transparent;
+  padding: 0 0.15rem;
+}
+.psg-float-input:focus + .psg-float-label,
+.psg-float-input:not(:placeholder-shown) + .psg-float-label {
+  top: 0.2rem;
+  font-size: 0.7rem;
+  color: rgb(5 150 105);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Toast container + animation (driven by app.js psgToast()). */
+#psg-toast-stack {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  pointer-events: none;
+}
+.psg-toast {
+  pointer-events: auto;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #fff;
+  box-shadow: 0 12px 30px -10px rgb(15 23 42 / 0.35), 0 4px 8px -2px rgb(15 23 42 / 0.18);
+  animation: psg-toast-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.psg-toast.psg-toast-out { animation: psg-toast-out 220ms ease-in forwards; }
+.psg-toast-success { background: linear-gradient(135deg, #059669, #047857); }
+.psg-toast-error   { background: linear-gradient(135deg, #dc2626, #b91c1c); }
+.psg-toast-info    { background: linear-gradient(135deg, #334155, #1e293b); }
+.psg-toast .psg-toast-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; background: rgba(255,255,255,0.8); margin-top: 0.45rem; flex-shrink: 0; }
+@keyframes psg-toast-in  { from { opacity: 0; transform: translateY(0.5rem) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes psg-toast-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(0.5rem) scale(0.96); } }
+
+/* Sidebar active indicator (left border + soft glow). Lives here only so
+   the gradient ring can be reused without restating Tailwind chains. */
+.psg-nav-link.is-active {
+  background: linear-gradient(90deg, rgba(16,185,129,0.16), transparent 75%);
+  color: #fff;
+}
+.psg-nav-link.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0.4rem; bottom: 0.4rem;
+  width: 2px;
+  background: linear-gradient(180deg, #10b981, #34d399);
+  border-radius: 2px;
+}
+
+/* IDE-style code editor textarea — used by /ui/commands. */
+.psg-code-editor {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 1px solid #1e293b;
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.825rem;
+  line-height: 1.55;
+  caret-color: #34d399;
+  tab-size: 4;
+}
+.psg-code-editor:focus { outline: none; border-color: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15); }
+
+/* Subtle marquee dot for live status indicators. */
+.psg-pulse-dot { position: relative; }
+.psg-pulse-dot::after {
+  content: '';
+  position: absolute; inset: -2px;
+  border-radius: 9999px;
+  animation: psg-pulse 1.8s ease-out infinite;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+}
+@keyframes psg-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* Dark mode follows the OS by default. */
+@media (prefers-color-scheme: dark) {
+  html:not(.light) { color-scheme: dark; }
+}

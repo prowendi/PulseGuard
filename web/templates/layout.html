@@ -1,29 +1,39 @@
 {{ define "layout-open" }}<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="h-full">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f172a">
 <title>{{ .Title }} · PulseGuard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%2310b981'/><stop offset='100%25' stop-color='%23059669'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><path d='M5 17h5l2-7 4 12 3-9 2 4h6' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="/static/tailwind.min.css">
 <link rel="stylesheet" href="/static/app.css">
 <script defer src="/static/htmx.min.js"></script>
 <script defer src="/static/app.js"></script>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen">
+<body class="h-full bg-slate-50 text-slate-800 antialiased font-sans selection:bg-emerald-200/60 selection:text-emerald-900 dark:bg-slate-950 dark:text-slate-200">
 {{ if .Tenant }}
 <div class="flex min-h-screen">
   {{ template "sidebar" . }}
   <div class="flex-1 flex flex-col min-w-0">
     {{ template "topbar" . }}
-    <main class="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
+    <main class="flex-1 w-full mx-auto max-w-screen-2xl px-6 lg:px-10 py-8">
       {{ if .Flash }}{{ template "flash" .Flash }}{{ end }}
 {{ else }}
-<div class="min-h-screen flex flex-col">
-  <header class="h-14 bg-white border-b border-slate-200 shadow-sm flex items-center px-6">
-    <a href="/ui/login" class="text-lg font-semibold text-slate-900 tracking-tight">PulseGuard</a>
-    <span class="ml-3 text-xs uppercase tracking-wider text-slate-400">多租户告警推送平台</span>
+<div class="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-emerald-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+  <header class="h-16 bg-white/80 backdrop-blur border-b border-slate-200/80 flex items-center px-6 dark:bg-slate-950/60 dark:border-slate-800">
+    <a href="/ui/login" class="flex items-center gap-2.5 group">
+      <span class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-sm shadow-emerald-500/30 ring-1 ring-emerald-500/40">
+        <svg viewBox="0 0 32 32" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h5l2-7 4 12 3-9 2 4h6"/></svg>
+      </span>
+      <span class="text-lg font-semibold tracking-tight text-slate-900 dark:text-white">PulseGuard</span>
+    </a>
+    <span class="ml-4 hidden sm:inline text-xs uppercase tracking-[0.18em] text-slate-400">多租户告警推送平台</span>
   </header>
-  <main class="flex-1 flex items-start justify-center px-6 py-12">
+  <main class="flex-1 flex items-center justify-center px-6 py-12">
     <div class="w-full max-w-md">
       {{ if .Flash }}{{ template "flash" .Flash }}{{ end }}
 {{ end }}
@@ -35,6 +45,7 @@
 </div>
 {{ else }}    </div>
   </main>
+  <footer class="border-t border-slate-200/70 py-4 text-center text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">PulseGuard · 多租户告警推送平台</footer>
 </div>
 {{ end }}
 </body>
