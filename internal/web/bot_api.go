@@ -199,8 +199,8 @@ func apiBotCreate(deps Deps) http.HandlerFunc {
 		if !validateName(w, r, p.Name, 64) {
 			return
 		}
-		if !botTokenPattern.MatchString(p.BotToken) {
-			writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_token format invalid")
+		if !botTokenLooksValid(p.Platform, p.BotToken) {
+			writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_token format invalid for platform "+p.Platform)
 			return
 		}
 		tenant := wmw.Tenant(r.Context())
@@ -278,8 +278,8 @@ func apiBotUpdate(deps Deps) http.HandlerFunc {
 		}
 		if p.BotToken != nil {
 			tok := strings.TrimSpace(*p.BotToken)
-			if !botTokenPattern.MatchString(tok) {
-				writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_token format invalid")
+			if !botTokenLooksValid(existing.Platform, tok) {
+				writeError(w, r, http.StatusBadRequest, "VALIDATION", "bot_token format invalid for platform "+existing.Platform)
 				return
 			}
 			existing.BotToken = tok

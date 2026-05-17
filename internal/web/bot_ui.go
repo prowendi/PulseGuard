@@ -74,8 +74,8 @@ func uiBotCreate(deps Deps) http.HandlerFunc {
 			uiBotListWithFlash(w, r, deps, tenant, "error", "未知 platform")
 			return
 		}
-		if name == "" || !botTokenPattern.MatchString(token) {
-			uiBotListWithFlash(w, r, deps, tenant, "error", "请提供合法的 name 与 bot_token")
+		if name == "" || !botTokenLooksValid(platform, token) {
+			uiBotListWithFlash(w, r, deps, tenant, "error", "请提供合法的 name 与 bot_token（Telegram: 数字:字母；Lark: https://open.feishu.cn/open-apis/bot/v2/hook/...）")
 			return
 		}
 		bot := &domain.Bot{
@@ -126,9 +126,12 @@ func uiBotUpdate(deps Deps) http.HandlerFunc {
 			return
 		}
 		// Validate the token format only when the operator actually
-		// typed something. Blank means "keep existing".
-		if newToken != "" && !botTokenPattern.MatchString(newToken) {
-			uiBotListWithFlash(w, r, deps, tenant, "error", "bot_token 格式不正确")
+		// typed something. Blank means "keep existing". The platform
+		// supplied in this form drives the regex choice; if the
+		// operator is switching platforms (Telegram ↔ Lark) the new
+		// token must match the *new* platform's shape.
+		if newToken != "" && !botTokenLooksValid(platform, newToken) {
+			uiBotListWithFlash(w, r, deps, tenant, "error", "bot_token 格式不正确（Telegram: 数字:字母；Lark: https://open.feishu.cn/open-apis/bot/v2/hook/...）")
 			return
 		}
 		bot, err := deps.Bots.GetByID(r.Context(), tenant.ID, id)

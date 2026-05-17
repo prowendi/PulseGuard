@@ -27,6 +27,36 @@ const MaxCommandCodeBytes = 64 * 1024
 // `<bot_id>:<token>` where the second part is base64url-ish.
 var botTokenPattern = regexp.MustCompile(`^\d+:[A-Za-z0-9_-]+$`)
 
+// larkWebhookPattern mirrors lark.webhookPattern so the web validation
+// layer can reject a Lark-shaped token that points at the wrong host
+// (or that a copy-paste accidentally truncated) before the row hits
+// the DB. Keeping it duplicated here is the lesser evil — importing
+// the lark package from web would entangle the dependency graph for
+// one constant.
+var larkWebhookPattern = regexp.MustCompile(`^https://open\.feishu\.cn/open-apis/bot/v2/hook/[A-Za-z0-9_\-]+/?$`)
+
+// botTokenLooksValid checks the token shape for the given platform.
+// Each platform stores a different credential in domain.Bot.BotToken:
+//
+//   - PlatformTelegram → "<bot_id>:<token>"
+//   - PlatformLark     → "https://open.feishu.cn/open-apis/bot/v2/hook/<key>"
+//
+// The function is shape-only; it does not call out to the upstream
+// API (that's the worker's job at delivery time). Returns false for
+// an unknown platform so the caller can surface a clean VALIDATION
+// error instead of accepting a credential that no Sender knows how
+// to consume.
+func botTokenLooksValid(platform, token string) bool {
+	switch platform {
+	case domain.PlatformTelegram:
+		return botTokenPattern.MatchString(token)
+	case domain.PlatformLark:
+		return larkWebhookPattern.MatchString(token)
+	default:
+		return false
+	}
+}
+
 // parsePathID extracts a positive int64 from a chi URL param, writing
 // a 400/VALIDATION response on failure and returning ok=false.
 func parsePathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {
