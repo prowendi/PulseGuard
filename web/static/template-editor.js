@@ -88,6 +88,11 @@
           return;
         }
         textarea.value = body;
+        // Auto-open the new-template drawer so the user sees the
+        // populated editor immediately after copying a demo.
+        if (typeof window.psgOpenDrawer === "function") {
+          window.psgOpenDrawer("drawer-new-tpl");
+        }
         textarea.focus();
       });
     });

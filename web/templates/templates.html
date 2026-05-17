@@ -6,93 +6,52 @@
       <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">消息模板</h1>
       <p class="mt-1 text-sm text-slate-500">支持 Go text/template 全语法；推荐 MarkdownV2，需调用 <code class="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[12px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">escMD</code> 函数转义字段。</p>
     </div>
-    <a href="#new-tpl" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
+    <button type="button" onclick="psgOpenDrawer('drawer-new-tpl')" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       新建模板
-    </a>
+    </button>
   </header>
 
-  <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
-    <div class="overflow-x-auto">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50/80 sticky top-0 backdrop-blur dark:bg-slate-900/80">
-          <tr class="text-left">
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-16">ID</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">名称</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">parse_mode</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Body 预览</th>
-            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider text-right">操作</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-          {{ $csrf := .CSRF }}
-          {{ range .Templates }}
-          <tr class="hover:bg-slate-50/70 transition-colors dark:hover:bg-slate-800/40">
-            <td class="px-5 py-3 text-slate-400 font-mono text-[12px]">#{{ .ID }}</td>
-            <td class="px-5 py-3"><span class="text-slate-900 font-semibold dark:text-white">{{ .Name }}</span></td>
-            <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">{{ .ParseMode }}</span></td>
-            <td class="px-5 py-3"><pre class="text-[11.5px] text-slate-600 max-w-md max-h-20 overflow-hidden whitespace-pre-wrap font-mono dark:text-slate-300">{{ .Body }}</pre></td>
-            <td class="px-5 py-3 text-right">
-              <form method="POST" action="/ui/templates/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');" class="inline">
-                <input type="hidden" name="csrf" value="{{ $csrf }}">
-                <button class="inline-flex items-center gap-1 text-[12.5px] text-rose-600 hover:text-rose-700 font-medium hover:bg-rose-50 px-2 py-1 rounded transition-colors">删除</button>
-              </form>
-            </td>
-          </tr>
-          {{ end }}
-          {{ if not .Templates }}<tr><td colspan="5" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无模板" "从右侧 Demo Gallery 一键复制范例，或在编辑器中手写。" "#new-tpl" "立即创建") }}</td></tr>{{ end }}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <div id="new-tpl" class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
     <section class="xl:col-span-2 bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
-      <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
-        <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">新建模板</h2>
-      </header>
-      <form method="POST" action="/ui/templates" class="p-6 space-y-4" id="tplForm">
-        <input type="hidden" name="csrf" value="{{ .CSRF }}">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div class="psg-float-wrap">
-            <input type="text" id="tn" name="name" required maxlength="64" placeholder="alert-critical" class="psg-float-input">
-            <label for="tn" class="psg-float-label">名称</label>
-          </div>
-          <div>
-            <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">parse_mode</label>
-            <select name="parse_mode" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
-              <option value="MarkdownV2">MarkdownV2</option>
-              <option value="HTML">HTML</option>
-              <option value="None">None</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Body</label>
-          <div class="rounded-xl ring-1 ring-slate-200 overflow-hidden focus-within:ring-4 focus-within:ring-emerald-500/15 focus-within:border-emerald-500 transition-all dark:ring-slate-800">
-            <div class="flex flex-wrap gap-1 bg-slate-50 border-b border-slate-200 px-2 py-1.5 text-[11.5px] dark:bg-slate-900/70 dark:border-slate-800" id="tplToolbar">
-              <button type="button" data-tpl-insert="var" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入变量</button>
-              <button type="button" data-tpl-insert="cond" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入条件</button>
-              <button type="button" data-tpl-insert="loop" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入循环</button>
-              <button type="button" data-tpl-insert="link" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入链接</button>
-              <button type="button" data-tpl-insert="code" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入代码</button>
-              <button type="button" data-tpl-insert="escape" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">包 escMD</button>
-            </div>
-            <textarea id="tplBody" name="body" required rows="12" placeholder="🚨 *{{ printf "%s" `{{ .title | escMD }}` }}*" class="psg-code-editor w-full block !border-0 !rounded-none !rounded-b-xl !shadow-none !ring-0 focus:!ring-0 resize-y"></textarea>
-          </div>
-          <p class="mt-1.5 text-[11.5px] text-slate-500">工具栏快捷插入；右侧 Demo Gallery 一键复制范例。</p>
-        </div>
-        <div class="pt-2">
-          <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建模板</button>
-        </div>
-      </form>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50/80 sticky top-0 backdrop-blur dark:bg-slate-900/80">
+            <tr class="text-left">
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider w-16">ID</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">名称</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">parse_mode</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">Body 预览</th>
+              <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+            {{ $csrf := .CSRF }}
+            {{ range .Templates }}
+            <tr class="hover:bg-slate-50/70 transition-colors dark:hover:bg-slate-800/40">
+              <td class="px-5 py-3 text-slate-400 font-mono text-[12px]">#{{ .ID }}</td>
+              <td class="px-5 py-3"><span class="text-slate-900 font-semibold dark:text-white">{{ .Name }}</span></td>
+              <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">{{ .ParseMode }}</span></td>
+              <td class="px-5 py-3"><pre class="text-[11.5px] text-slate-600 max-w-md max-h-20 overflow-hidden whitespace-pre-wrap font-mono dark:text-slate-300">{{ .Body }}</pre></td>
+              <td class="px-5 py-3 text-right">
+                <form method="POST" action="/ui/templates/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');" class="inline">
+                  <input type="hidden" name="csrf" value="{{ $csrf }}">
+                  <button class="inline-flex items-center gap-1 text-[12.5px] text-rose-600 hover:text-rose-700 font-medium hover:bg-rose-50 px-2 py-1 rounded transition-colors">删除</button>
+                </form>
+              </td>
+            </tr>
+            {{ end }}
+            {{ if not .Templates }}<tr><td colspan="5" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚无模板" "从右侧 Demo Gallery 一键复制范例，或点击新建按钮在编辑器中手写。" "javascript:psgOpenDrawer('drawer-new-tpl')" "立即创建") }}</td></tr>{{ end }}
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <aside class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
       <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
         <div class="inline-flex items-center gap-2 rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider">GALLERY</div>
         <h2 class="mt-2 text-[15px] font-semibold text-slate-900 dark:text-white">Demo 范例</h2>
-        <p class="mt-0.5 text-[12px] text-slate-500">点击 "复制到编辑器" 自动填充上方表单。</p>
+        <p class="mt-0.5 text-[12px] text-slate-500">点击 "复制到编辑器" 自动打开 drawer 并填充表单。</p>
       </header>
       <div class="p-5 space-y-3 max-h-[640px] overflow-y-auto" id="tplDemos">
         {{ range .Demos }}
@@ -107,6 +66,58 @@
         {{ end }}
       </div>
     </aside>
+  </div>
+</div>
+
+<!-- Drawer: 新建模板 ==================================================== -->
+<div id="drawer-new-tpl" class="psg-drawer fixed inset-0 z-40 hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-new-tpl-title">
+  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" onclick="psgCloseDrawer('drawer-new-tpl')"></div>
+  <div class="psg-drawer-panel absolute top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col translate-x-full transition-transform duration-300 ease-out dark:bg-slate-900 dark:ring-white/10">
+    <header class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div>
+        <h2 id="drawer-new-tpl-title" class="text-base font-semibold text-slate-900 dark:text-white">新建模板</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">工具栏快捷插入；Demo Gallery 可一键复制范例到此编辑器。</p>
+      </div>
+      <button type="button" onclick="psgCloseDrawer('drawer-new-tpl')" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
+    </header>
+    <form method="POST" action="/ui/templates" class="flex-1 overflow-y-auto p-6 space-y-4" id="tplForm">
+      <input type="hidden" name="csrf" value="{{ .CSRF }}">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="psg-float-wrap">
+          <input type="text" id="tn" name="name" required maxlength="64" placeholder="alert-critical" class="psg-float-input">
+          <label for="tn" class="psg-float-label">名称</label>
+        </div>
+        <div>
+          <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">parse_mode</label>
+          <select name="parse_mode" class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+            <option value="MarkdownV2">MarkdownV2</option>
+            <option value="HTML">HTML</option>
+            <option value="None">None</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Body</label>
+        <div class="rounded-xl ring-1 ring-slate-200 overflow-hidden focus-within:ring-4 focus-within:ring-emerald-500/15 focus-within:border-emerald-500 transition-all dark:ring-slate-800">
+          <div class="flex flex-wrap gap-1 bg-slate-50 border-b border-slate-200 px-2 py-1.5 text-[11.5px] dark:bg-slate-900/70 dark:border-slate-800" id="tplToolbar">
+            <button type="button" data-tpl-insert="var" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入变量</button>
+            <button type="button" data-tpl-insert="cond" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入条件</button>
+            <button type="button" data-tpl-insert="loop" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入循环</button>
+            <button type="button" data-tpl-insert="link" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入链接</button>
+            <button type="button" data-tpl-insert="code" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">插入代码</button>
+            <button type="button" data-tpl-insert="escape" class="px-2 py-1 rounded hover:bg-white border border-transparent hover:border-slate-200 text-slate-700 transition-colors dark:hover:bg-slate-800 dark:text-slate-300">包 escMD</button>
+          </div>
+          <textarea id="tplBody" name="body" required rows="14" placeholder="🚨 *{{ printf "%s" `{{ .title | escMD }}` }}*" class="psg-code-editor w-full block !border-0 !rounded-none !rounded-b-xl !shadow-none !ring-0 focus:!ring-0 resize-y"></textarea>
+        </div>
+        <p class="mt-1.5 text-[11.5px] text-slate-500">从右侧 Demo Gallery "复制到编辑器" 可一键填充。</p>
+      </div>
+      <div class="pt-2 flex items-center gap-2">
+        <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建模板</button>
+        <button type="button" onclick="psgCloseDrawer('drawer-new-tpl')" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
+      </div>
+    </form>
   </div>
 </div>
 <script defer src="/static/template-editor.js"></script>
