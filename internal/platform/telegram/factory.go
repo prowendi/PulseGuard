@@ -18,6 +18,7 @@ type Factory struct {
 	dispatcher CommandDispatcher
 	catalog    CommandCatalog
 	remover    SubscriberRemover
+	acker      AlertAcker
 }
 
 // FactoryOptions bundles the optional knobs. apiBase=="" defaults to
@@ -31,6 +32,8 @@ type Factory struct {
 // setMyCommands on startup and back the built-in /commands helper.
 //
 // Remover, when non-nil, powers the built-in /unsubscribe command.
+//
+// Acker, when non-nil, powers the built-in /ack <fingerprint> command.
 type FactoryOptions struct {
 	APIBase    string
 	HTTP       *http.Client
@@ -38,6 +41,7 @@ type FactoryOptions struct {
 	Dispatcher CommandDispatcher
 	Catalog    CommandCatalog
 	Remover    SubscriberRemover
+	Acker      AlertAcker
 }
 
 // NewFactory constructs a Factory. Pass FactoryOptions{} for defaults.
@@ -49,6 +53,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		dispatcher: opts.Dispatcher,
 		catalog:    opts.Catalog,
 		remover:    opts.Remover,
+		acker:      opts.Acker,
 	}
 }
 
@@ -65,6 +70,7 @@ func (f *Factory) Build(bot *domain.Bot) (platform.Listener, error) {
 		Dispatcher: f.dispatcher,
 		Catalog:    f.catalog,
 		Remover:    f.remover,
+		Acker:      f.acker,
 	})
 }
 

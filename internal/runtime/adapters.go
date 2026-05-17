@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
 
 	"github.com/wendi/pulseguard/internal/domain"
 	"github.com/wendi/pulseguard/internal/platform/telegram"
+	"github.com/wendi/pulseguard/internal/store"
 )
 
 // commandCatalogAdapter projects domain.CommandRepo into the narrow
@@ -52,9 +54,62 @@ func (a subscriberRemoverAdapter) DeleteByChatAndCommand(ctx context.Context, bo
 	return a.subscribers.DeleteByChatAndCommand(ctx, botID, chatID, commandName)
 }
 
+// alertAckerAdapter projects domain.AlertAckRepo into the narrow
+// telegram.AlertAcker interface the listener consumes for the /ack
+// built-in. The bot row is read once per invocation to resolve the
+// tenant_id the audit row needs — listener-supplied botID is the
+// PulseGuard DB primary key so the lookup never crosses tenants.
+//
+// store.ErrAlreadyAcked is translated to telegram.ErrAckAlreadyExists
+// so the listener stays decoupled from the store package's error
+// sentinels.
+type alertAckerAdapter struct {
+	acks domain.AlertAckRepo
+	bots domain.BotRepo
+}
+
+// Insert resolves tenant_id from the bot row, then writes the ack.
+// Tenant resolution uses ListAll because BotRepo.GetByID needs a
+// tenant scope by contract — a small lookup table here is the price
+// of keeping the BotRepo interface symmetric. In practice the bots
+// list is short (single-digit per tenant) and the call is rare, so
+// the linear scan is fine.
+func (a alertAckerAdapter) Insert(ctx context.Context, in telegram.AckInput) error {
+	tenantID, err := a.tenantForBot(ctx, in.BotID)
+	if err != nil {
+		return err
+	}
+	err = a.acks.Insert(ctx, &domain.AlertAck{
+		TenantID:    tenantID,
+		Fingerprint: in.Fingerprint,
+		AckedBy:     in.AckedBy,
+		BotID:       in.BotID,
+		ChatID:      in.ChatID,
+	})
+	if errors.Is(err, store.ErrAlreadyAcked) {
+		return telegram.ErrAckAlreadyExists
+	}
+	return err
+}
+
+func (a alertAckerAdapter) tenantForBot(ctx context.Context, botID int64) (int64, error) {
+	bots, err := a.bots.ListAll(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, b := range bots {
+		if b != nil && b.ID == botID {
+			return b.TenantID, nil
+		}
+	}
+	return 0, domain.ErrNotFound
+}
+
 // Compile-time conformance.
 var (
 	_ telegram.CommandCatalog    = commandCatalogAdapter{}
 	_ telegram.SubscriberRemover = subscriberRemoverAdapter{}
+	_ telegram.AlertAcker        = alertAckerAdapter{}
 )
+
 

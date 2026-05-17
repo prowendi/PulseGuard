@@ -827,3 +827,172 @@ func TestListener_UnsubscribeBuiltinUsageHint(t *testing.T) {
 		t.Fatalf("remover called %d times for arg-less /unsubscribe, want 0", got)
 	}
 }
+
+// fakeAcker is a scriptable telegram.AlertAcker used by /ack tests.
+// dup=true makes Insert return ErrAckAlreadyExists; otherwise the call
+// is recorded and returns nil.
+type fakeAcker struct {
+	mu    sync.Mutex
+	dup   bool
+	calls []AckInput
+}
+
+func newFakeAcker() *fakeAcker { return &fakeAcker{} }
+
+func (a *fakeAcker) Insert(_ context.Context, in AckInput) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.calls = append(a.calls, in)
+	if a.dup {
+		return ErrAckAlreadyExists
+	}
+	return nil
+}
+
+func (a *fakeAcker) Calls() []AckInput {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]AckInput, len(a.calls))
+	copy(out, a.calls)
+	return out
+}
+
+func TestListener_AckBuiltinHappyPath(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	// Message carries a from.username so the audit row uses @alice.
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {
+			"chat":{"id":900},
+			"from":{"id":555,"is_bot":false,"username":"alice"},
+			"text":"/ack abc123"
+		}
+	}]}`)
+
+	ack := newFakeAcker()
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Acker:   ack,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(ack.Calls()) >= 1 })
+	call := ack.Calls()[0]
+	if call.BotID != 42 {
+		t.Fatalf("BotID = %d, want 42 (DB bot.ID)", call.BotID)
+	}
+	if call.Fingerprint != "abc123" {
+		t.Fatalf("Fingerprint = %q, want abc123", call.Fingerprint)
+	}
+	if call.ChatID != "900" {
+		t.Fatalf("ChatID = %q, want \"900\"", call.ChatID)
+	}
+	if call.AckedBy != "@alice" {
+		t.Fatalf("AckedBy = %q, want @alice", call.AckedBy)
+	}
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	got := srv.sentSnapshot()[0].Text
+	if !strings.Contains(got, "已 ACK") || !strings.Contains(got, "abc123") || !strings.Contains(got, "@alice") {
+		t.Fatalf("unexpected reply: %q", got)
+	}
+}
+
+func TestListener_AckBuiltinDuplicateFriendly(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {
+			"chat":{"id":901}, "text":"/ack dup-fp"
+		}
+	}]}`)
+
+	ack := newFakeAcker()
+	ack.dup = true
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Acker:   ack,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	got := srv.sentSnapshot()[0].Text
+	if !strings.Contains(got, "已记录") {
+		t.Fatalf("expected duplicate-friendly reply, got %q", got)
+	}
+}
+
+func TestListener_AckBuiltinUsageHint(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":902}, "text":"/ack"}
+	}]}`)
+
+	ack := newFakeAcker()
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Acker:   ack,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
+	if got := srv.sentSnapshot()[0].Text; !strings.Contains(got, "用法") {
+		t.Fatalf("expected usage hint, got %q", got)
+	}
+	if got := len(ack.Calls()); got != 0 {
+		t.Fatalf("acker called %d times for arg-less /ack, want 0", got)
+	}
+}
+
+func TestListener_AckBuiltinChatFallback(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	// No from field → AckedBy falls back to "chat:<chat_id>".
+	srv.queueUpdates(`{"ok":true,"result":[{
+		"update_id": 1, "message": {"chat":{"id":903}, "text":"/ack fp-x"}
+	}]}`)
+
+	ack := newFakeAcker()
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Acker:   ack,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool { return len(ack.Calls()) >= 1 })
+	if got := ack.Calls()[0].AckedBy; got != "chat:903" {
+		t.Fatalf("AckedBy = %q, want chat:903", got)
+	}
+}

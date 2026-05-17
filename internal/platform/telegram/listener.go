@@ -94,6 +94,32 @@ type SubscriberRemover interface {
 	DeleteByChatAndCommand(ctx context.Context, botID int64, chatID, commandName string) error
 }
 
+// AlertAcker records that an operator acknowledged an alert via the
+// listener's /ack <fingerprint> built-in. Insert returns
+// ErrAckAlreadyExists when the (bot's tenant, fingerprint) pair has
+// already been acked — the listener turns that into a friendly
+// "已记录" reply rather than surfacing the SQL constraint failure.
+//
+// botID + chatID identify the source of the ack so the audit row
+// carries enough breadcrumbs to answer "who acked this and where".
+// The listener resolves tenant via the bot row before calling.
+type AlertAcker interface {
+	Insert(ctx context.Context, in AckInput) error
+}
+
+// AckInput is the listener → AlertAcker contract.
+type AckInput struct {
+	BotID       int64
+	ChatID      string
+	Fingerprint string
+	AckedBy     string // Telegram @username, or "chat:<chat_id>" fallback
+}
+
+// ErrAckAlreadyExists signals the (tenant, fingerprint) ack row was
+// already present. The listener treats this as a successful no-op
+// with a distinct user reply.
+var ErrAckAlreadyExists = errors.New("telegram: ack already exists")
+
 // DispatchInput is the listener → dispatcher contract.
 type DispatchInput struct {
 	BotID  int64
@@ -151,6 +177,7 @@ type Listener struct {
 	dispatcher CommandDispatcher
 	catalog    CommandCatalog    // optional: powers setMyCommands + /commands
 	remover    SubscriberRemover // optional: powers /unsubscribe
+	acker      AlertAcker        // optional: powers /ack
 }
 
 // Options bundles the optional knobs. apiBase defaults to
@@ -166,6 +193,8 @@ type Listener struct {
 // backs the built-in /commands helper.
 //
 // Remover, when non-nil, powers the built-in /unsubscribe command.
+//
+// Acker, when non-nil, powers the built-in /ack <fingerprint> command.
 type Options struct {
 	APIBase    string
 	HTTP       *http.Client
@@ -173,6 +202,7 @@ type Options struct {
 	Dispatcher CommandDispatcher
 	Catalog    CommandCatalog
 	Remover    SubscriberRemover
+	Acker      AlertAcker
 }
 
 // New constructs a Listener for the supplied bot. The bot's BotToken
@@ -216,6 +246,7 @@ func New(bot *domain.Bot, opts Options) (*Listener, error) {
 		dispatcher: opts.Dispatcher,
 		catalog:    opts.Catalog,
 		remover:    opts.Remover,
+		acker:      opts.Acker,
 	}, nil
 }
 
@@ -424,6 +455,13 @@ func (l *Listener) handle(ctx context.Context, u update) {
 		}
 		l.handleUnsubscribe(ctx, msg.Chat.ID, arg)
 		return
+	case "/ack":
+		var fp string
+		if len(tokens) > 1 {
+			fp = tokens[1]
+		}
+		l.handleAck(ctx, msg.Chat.ID, fp, msg.From)
+		return
 	}
 
 	// Anything else starting with "/" is a candidate for the
@@ -592,6 +630,68 @@ func (l *Listener) handleUnsubscribe(ctx context.Context, chatID int64, name str
 	}
 }
 
+// handleAck records an operator acknowledgement against the supplied
+// fingerprint. Reply variants:
+//
+//   - no argument           → usage hint
+//   - acker not wired       → silent (legacy harness)
+//   - success               → "已 ACK: <fp> by @<user>"
+//   - duplicate (ErrAck…)   → "已记录"  (idempotent friendly path)
+//   - other failure         → "ACK 失败"
+//
+// The "ackedBy" label is preferred in this order:
+//   1. @username (Telegram identity, most useful for audit)
+//   2. first + last name fallback
+//   3. "chat:<chat_id>" terminal fallback so the audit row never
+//      records the literal string "unknown"
+func (l *Listener) handleAck(ctx context.Context, chatID int64, fp string, from *chatUser) {
+	fp = strings.TrimSpace(fp)
+	if fp == "" {
+		l.replyText(ctx, chatID, "用法：/ack <fingerprint>")
+		return
+	}
+	if l.acker == nil {
+		l.logger.Info("telegram: /ack received but acker not wired",
+			"bot_id", l.botID, "tenant_id", l.tenantID, "fp", fp)
+		return
+	}
+	ackedBy := ackedByLabel(from, chatID)
+	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	chatStr := strconv.FormatInt(chatID, 10)
+	err := l.acker.Insert(ackCtx, AckInput{
+		BotID:       l.dbBotID,
+		ChatID:      chatStr,
+		Fingerprint: fp,
+		AckedBy:     ackedBy,
+	})
+	switch {
+	case err == nil:
+		l.replyText(ctx, chatID, "已 ACK: "+fp+" by "+ackedBy)
+	case errors.Is(err, ErrAckAlreadyExists):
+		l.replyText(ctx, chatID, "已记录: "+fp)
+	default:
+		l.logger.Warn("telegram: /ack failed",
+			"bot_id", l.botID, "tenant_id", l.tenantID,
+			"fp", fp, "chat_id", chatID, "err", err.Error())
+		l.replyText(ctx, chatID, "ACK 失败")
+	}
+}
+
+// ackedByLabel picks a friendly identity for the ack audit row.
+func ackedByLabel(from *chatUser, chatID int64) string {
+	if from != nil {
+		if u := strings.TrimSpace(from.Username); u != "" {
+			return "@" + u
+		}
+		name := strings.TrimSpace(from.FirstName + " " + from.LastName)
+		if name != "" {
+			return name
+		}
+	}
+	return "chat:" + strconv.FormatInt(chatID, 10)
+}
+
 // replyText is the underlying sendMessage helper. Errors are logged
 // and never propagated so a transient TG hiccup cannot kill the loop.
 func (l *Listener) replyText(ctx context.Context, chatID int64, text string) {
@@ -665,6 +765,7 @@ type update struct {
 type message struct {
 	Chat           chat       `json:"chat"`
 	Text           string     `json:"text,omitempty"`
+	From           *chatUser  `json:"from,omitempty"`
 	NewChatMembers []chatUser `json:"new_chat_members,omitempty"`
 }
 
@@ -674,8 +775,11 @@ type chat struct {
 }
 
 type chatUser struct {
-	ID    int64 `json:"id"`
-	IsBot bool  `json:"is_bot"`
+	ID        int64  `json:"id"`
+	IsBot     bool   `json:"is_bot"`
+	Username  string `json:"username,omitempty"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
 }
 
 // getUpdates issues a long-poll request. The "allowed_updates" filter

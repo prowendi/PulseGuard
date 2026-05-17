@@ -169,3 +169,17 @@ type SubscriberRepo interface {
 	// CommandRepo.GetByBotAndName / ListByBot.
 	DeleteByChatAndCommand(ctx context.Context, botID int64, chatID, commandName string) error
 }
+
+// AlertAckRepo records "operator acknowledged alert <fingerprint>"
+// events written by the Telegram /ack built-in. The push pipeline
+// will (in a later sprint) consult GetByFingerprint to skip an
+// already-acked storm; for now V6-3 only ships the audit trail.
+//
+// Insert returns store.ErrAlreadyAcked on (tenant, fingerprint)
+// UNIQUE collisions so callers can render a friendly reply without
+// surfacing SQL details.
+type AlertAckRepo interface {
+	Insert(ctx context.Context, a *AlertAck) error
+	GetByFingerprint(ctx context.Context, tenantID int64, fingerprint string) (*AlertAck, error)
+	ListByTenant(ctx context.Context, tenantID int64) ([]*AlertAck, error)
+}

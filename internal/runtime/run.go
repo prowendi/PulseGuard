@@ -133,6 +133,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	rl := store.NewRateLimitRepo(db, clock)
 	commands := store.NewCommandRepo(db, clock)
 	subscribers := store.NewSubscriberRepo(db, clock)
+	alertAcks := store.NewAlertAckRepo(db, clock)
 
 	// ── 4. Sender (real TG client, unless overridden by tests).
 	var sender domain.Sender = tg.New(cfg.Telegram)
@@ -225,11 +226,12 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 
 	// CommandCatalog adapter: the listener consults this on startup to
 	// publish setMyCommands and to back /commands. SubscriberRemover
-	// powers /unsubscribe. Domain→telegram projections are intentionally
-	// narrow so the listener package never imports domain types beyond
-	// what it owns.
+	// powers /unsubscribe. AlertAcker powers /ack. Domain→telegram
+	// projections are intentionally narrow so the listener package
+	// never imports domain types beyond what it owns.
 	catalog := commandCatalogAdapter{commands: commands}
 	remover := subscriberRemoverAdapter{subscribers: subscribers}
+	acker := alertAckerAdapter{acks: alertAcks, bots: bots}
 
 	listenerFactories := ov.BotListenerFactories
 	if len(listenerFactories) == 0 {
@@ -245,6 +247,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 				Dispatcher: dispatcher,
 				Catalog:    catalog,
 				Remover:    remover,
+				Acker:      acker,
 			}),
 		}
 	}
