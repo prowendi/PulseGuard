@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/wendi/pulseguard/internal/config"
@@ -116,6 +117,44 @@ type sendResp struct {
 // Network failures and non-zero Lark codes come back as *APIError so
 // the worker can branch on .Class the same way it already does for
 // tg.APIError.
+// buildLarkBody chooses between rich-content pass-through and the
+// legacy text wrapper. If text is a JSON object whose top level
+// declares "msg_type" (text / post / interactive / image / share_chat
+// / etc.) we trust the operator and forward it raw; this is how
+// Markdown-style templates compose Lark post / card payloads without
+// the server needing a per-format renderer. Anything else — including
+// JSON that does NOT declare msg_type — is wrapped as a plain text
+// message, preserving the original v1 behaviour.
+func buildLarkBody(text string) ([]byte, error) {
+	if isLarkEnvelope(text) {
+		return []byte(text), nil
+	}
+	return json.Marshal(sendReq{
+		MsgType: "text",
+		Content: sendContent{Text: text},
+	})
+}
+
+// isLarkEnvelope reports whether s is a JSON object with a string
+// "msg_type" field — the marker that the template author meant to
+// hand-craft a Lark message envelope rather than send plain text.
+// We intentionally do not validate the rest of the schema; Lark's
+// own response surfaces shape errors via non-zero `code`, which the
+// worker already treats as a permanent failure.
+func isLarkEnvelope(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" || trimmed[0] != '{' {
+		return false
+	}
+	var probe struct {
+		MsgType string `json:"msg_type"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+		return false
+	}
+	return probe.MsgType != ""
+}
+
 func (c *Client) Send(ctx context.Context, botToken, chatID, parseMode, text string) (int64, error) {
 	_ = chatID
 	_ = parseMode
@@ -123,12 +162,16 @@ func (c *Client) Send(ctx context.Context, botToken, chatID, parseMode, text str
 		return 0, ErrBadWebhook
 	}
 
-	body, err := json.Marshal(sendReq{
-		MsgType: "text",
-		Content: sendContent{Text: text},
-	})
+	// Rich content pass-through: if the rendered template body is
+	// already a Lark message envelope (its top-level JSON object
+	// contains a "msg_type" key) we forward it verbatim instead of
+	// wrapping it as plain text. Operators can compose post / image /
+	// interactive cards by simply emitting the full JSON from a
+	// template. Anything else stays a text message — the legacy code
+	// path, fully backwards compatible.
+	body, err := buildLarkBody(text)
 	if err != nil {
-		return 0, fmt.Errorf("lark: marshal: %w", err)
+		return 0, fmt.Errorf("lark: build body: %w", err)
 	}
 
 	url := botToken

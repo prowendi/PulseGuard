@@ -282,3 +282,74 @@ func TestAPIErrorNil(t *testing.T) {
 		t.Fatalf("nil APIError = %s", got)
 	}
 }
+
+func TestIsLarkEnvelope(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"plain text", "hello world", false},
+		{"empty", "", false},
+		{"whitespace", "   \n\t  ", false},
+		{"json without msg_type", `{"text":"hi"}`, false},
+		{"json msg_type empty", `{"msg_type":""}`, false},
+		{"text envelope", `{"msg_type":"text","content":{"text":"hi"}}`, true},
+		{"post envelope", `{"msg_type":"post","content":{"post":{}}}`, true},
+		{"interactive envelope", `{"msg_type":"interactive","card":{}}`, true},
+		{"leading whitespace", "  \n  {\"msg_type\":\"text\"}", true},
+		{"broken json", `{"msg_type":`, false},
+		{"non-object", `["msg_type"]`, false},
+	}
+	for _, c := range cases {
+		if got := isLarkEnvelope(c.in); got != c.want {
+			t.Errorf("%s: isLarkEnvelope(%q) = %v want %v", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+func TestBuildLarkBody_TextWrapsPlainString(t *testing.T) {
+	body, err := buildLarkBody("hello")
+	if err != nil {
+		t.Fatalf("buildLarkBody: %v", err)
+	}
+	var got sendReq
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.MsgType != "text" {
+		t.Errorf("MsgType = %q want text", got.MsgType)
+	}
+	if got.Content.Text != "hello" {
+		t.Errorf("Content.Text = %q want hello", got.Content.Text)
+	}
+}
+
+func TestBuildLarkBody_EnvelopePassThrough(t *testing.T) {
+	envelope := `{"msg_type":"post","content":{"post":{"zh_cn":{"title":"t","content":[]}}}}`
+	body, err := buildLarkBody(envelope)
+	if err != nil {
+		t.Fatalf("buildLarkBody: %v", err)
+	}
+	if string(body) != envelope {
+		t.Fatalf("envelope mutated:\n got:  %s\n want: %s", body, envelope)
+	}
+}
+
+func TestSendInteractiveCardPassesThrough(t *testing.T) {
+	// Verify the body the server receives is the exact envelope the
+	// template emitted — no double-wrapping into a "text" message.
+	want := `{"msg_type":"interactive","card":{"elements":[{"tag":"div","text":{"tag":"plain_text","content":"ok"}}]}}`
+	srv := newFakeServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"success"}`))
+	})
+	defer srv.Close()
+	c := newTestClient(srv)
+	if _, err := c.Send(context.Background(), testWebhook, "", "", want); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got := string(srv.lastBody); got != want {
+		t.Fatalf("body mismatch:\n got:  %s\n want: %s", got, want)
+	}
+}
