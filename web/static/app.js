@@ -287,6 +287,62 @@
           }
           break;
         }
+        case "tpl-preview": {
+          // V6-5 template live-preview: POST the current Body +
+          // parse_mode + sample payload to /api/v1/templates/preview
+          // and dump the rendered text into the panel. The drawer
+          // scope ("new"|"edit") picks which textareas/output to read.
+          // CSRF token is pulled from the psg_csrf cookie so we obey
+          // the same protections as the rest of the authed API surface.
+          e.preventDefault();
+          var scope = node.getAttribute("data-scope") || "new";
+          var panel = document.querySelector('[data-tpl-preview-scope="' + scope + '"]');
+          if (!panel) return;
+          var drawerId = scope === "edit" ? "drawer-edit-tpl" : "drawer-new-tpl";
+          var drawer = document.getElementById(drawerId);
+          if (!drawer) return;
+          var bodyEl = drawer.querySelector('[name="body"]');
+          var modeEl = drawer.querySelector('[name="parse_mode"]');
+          var sampleEl = panel.querySelector('[data-tpl-sample]');
+          var outEl = panel.querySelector('[data-tpl-preview-out]');
+          if (!bodyEl || !modeEl || !outEl) return;
+          var sample = {};
+          if (sampleEl && sampleEl.value.trim() !== "") {
+            try {
+              sample = JSON.parse(sampleEl.value);
+            } catch (parseErr) {
+              outEl.textContent = "示例 payload 不是合法 JSON: " + parseErr.message;
+              return;
+            }
+          }
+          outEl.textContent = "渲染中...";
+          var token = readCookie("psg_csrf");
+          fetch("/api/v1/templates/preview", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": token || ""
+            },
+            body: JSON.stringify({
+              body: bodyEl.value,
+              parse_mode: modeEl.value,
+              sample: sample
+            })
+          }).then(function (resp) {
+            return resp.json().then(function (data) {
+              if (!resp.ok) {
+                var msg = (data && (data.error || data.message)) || ("HTTP " + resp.status);
+                outEl.textContent = "预览失败: " + msg;
+                return;
+              }
+              outEl.textContent = (data && (data.rendered || "")) || "(空)";
+            });
+          }).catch(function (err) {
+            outEl.textContent = "预览失败: " + (err && err.message ? err.message : err);
+          });
+          break;
+        }
         default:
           break;
       }
