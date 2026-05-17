@@ -175,3 +175,11 @@ input, textarea, select { caret-color: var(--psg-brand); }
 @media (prefers-color-scheme: dark) {
   html:not(.light) { color-scheme: dark; }
 }
+
+/* Right-side drawer scaffolding. All motion + sizing is owned by Tailwind
+   utilities on the markup itself; this block only guarantees the root
+   container collapses when .hidden is present (Tailwind's `hidden` class
+   already does `display:none`, but we keep an explicit rule so future
+   utility-class purges cannot break the open/close state machine). */
+.psg-drawer { opacity: 1; }
+.psg-drawer.hidden { display: none; }

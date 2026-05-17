@@ -89,4 +89,75 @@
   });
   // HTMX swaps may inject new toggle buttons; re-bind after each swap.
   document.addEventListener("htmx:afterSwap", bindToggles);
+
+  // ---- Right-side drawer (Linear/Vercel style) -------------------------
+  // Markup contract (inlined per page to avoid template.HTML XSS risk):
+  //   <div id="drawer-xxx" class="psg-drawer fixed inset-0 z-40 hidden"
+  //        role="dialog" aria-modal="true" aria-labelledby="drawer-xxx-title">
+  //     <div class="psg-drawer-backdrop ..." onclick="psgCloseDrawer('drawer-xxx')"></div>
+  //     <div class="psg-drawer-panel ... translate-x-full">...</div>
+  //   </div>
+  // The 300ms slide is owned by Tailwind transition utilities; we toggle
+  // translate-x-full / opacity-0 classes here and let CSS animate.
+  window.psgOpenDrawer = function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove("hidden");
+    // Force reflow so the subsequent class change triggers a transition
+    // rather than a synchronous paint (otherwise the slide is invisible
+    // because the element was hidden when the panel had translate-x-full).
+    void el.offsetHeight;
+    var backdrop = el.querySelector(".psg-drawer-backdrop");
+    var panel = el.querySelector(".psg-drawer-panel");
+    if (backdrop) {
+      backdrop.classList.remove("opacity-0");
+      backdrop.classList.add("opacity-100");
+    }
+    if (panel) {
+      panel.classList.remove("translate-x-full");
+    }
+    document.body.style.overflow = "hidden";
+    // Focus the first interactive field so keyboard users land in-form.
+    var f = el.querySelector("input,textarea,select,button");
+    if (f) {
+      try { f.focus({ preventScroll: true }); } catch (e) { f.focus(); }
+    }
+  };
+
+  window.psgCloseDrawer = function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var backdrop = el.querySelector(".psg-drawer-backdrop");
+    var panel = el.querySelector(".psg-drawer-panel");
+    if (panel) panel.classList.add("translate-x-full");
+    if (backdrop) {
+      backdrop.classList.remove("opacity-100");
+      backdrop.classList.add("opacity-0");
+    }
+    setTimeout(function () {
+      el.classList.add("hidden");
+      // Only release body scroll lock when no other drawer is open.
+      var stillOpen = document.querySelector(".psg-drawer:not(.hidden)");
+      if (!stillOpen) document.body.style.overflow = "";
+    }, 300);
+  };
+
+  // ESC closes any currently open drawer.
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    document.querySelectorAll(".psg-drawer:not(.hidden)").forEach(function (d) {
+      window.psgCloseDrawer(d.id);
+    });
+  });
+
+  // Deep-link via hash (e.g. /ui/bots#drawer-new-bot opens the drawer).
+  // Runs after DOMContentLoaded so the drawer node is guaranteed parsed.
+  window.addEventListener("DOMContentLoaded", function () {
+    if (!location.hash) return;
+    var id = location.hash.slice(1);
+    var el = document.getElementById(id);
+    if (el && el.classList.contains("psg-drawer")) {
+      window.psgOpenDrawer(id);
+    }
+  });
 })();
