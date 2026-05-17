@@ -147,6 +147,11 @@ type CommandRepo interface {
 	// owner. ErrNotFound is returned for unknown bot, unknown command,
 	// or cross-tenant mismatches. Listener-only API.
 	GetByBotAndName(ctx context.Context, botID int64, name string) (*Command, error)
+	// ListByBot enumerates every ENABLED command owned by the same
+	// tenant as botID. Powers the Telegram setMyCommands publisher and
+	// the /commands built-in; both expose a public catalog, so disabled
+	// rows MUST stay hidden. Same bot id convention as GetByBotAndName.
+	ListByBot(ctx context.Context, botID int64) ([]*Command, error)
 }
 
 // SubscriberRepo records (command, bot, chat_id) tuples and exposes

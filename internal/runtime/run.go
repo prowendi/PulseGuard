@@ -223,6 +223,12 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	scriptExec := &scripting.Executor{HTTP: scriptHTTP}
 	dispatcher := cmdrun.New(commands, scriptExec, subscribers, logger)
 
+	// CommandCatalog adapter: the listener consults this on startup to
+	// publish setMyCommands. Domain→telegram projection is intentionally
+	// narrow so the listener package never imports domain types beyond
+	// what it owns.
+	catalog := commandCatalogAdapter{commands: commands}
+
 	listenerFactories := ov.BotListenerFactories
 	if len(listenerFactories) == 0 {
 		tgTimeout := cfg.Telegram.HTTPTimeout.Std()
@@ -235,6 +241,7 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 				HTTP:       &http.Client{Timeout: tgTimeout},
 				Logger:     logger,
 				Dispatcher: dispatcher,
+				Catalog:    catalog,
 			}),
 		}
 	}

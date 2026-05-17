@@ -16,6 +16,8 @@ type Factory struct {
 	httpC      *http.Client
 	logger     *slog.Logger
 	dispatcher CommandDispatcher
+	catalog    CommandCatalog
+	remover    SubscriberRemover
 }
 
 // FactoryOptions bundles the optional knobs. apiBase=="" defaults to
@@ -24,11 +26,18 @@ type Factory struct {
 //
 // Dispatcher, when non-nil, is plumbed into every Listener the factory
 // builds so per-tenant custom commands get dispatched.
+//
+// Catalog, when non-nil, lets each Listener publish its slash menu via
+// setMyCommands on startup and back the built-in /commands helper.
+//
+// Remover, when non-nil, powers the built-in /unsubscribe command.
 type FactoryOptions struct {
 	APIBase    string
 	HTTP       *http.Client
 	Logger     *slog.Logger
 	Dispatcher CommandDispatcher
+	Catalog    CommandCatalog
+	Remover    SubscriberRemover
 }
 
 // NewFactory constructs a Factory. Pass FactoryOptions{} for defaults.
@@ -38,6 +47,8 @@ func NewFactory(opts FactoryOptions) *Factory {
 		httpC:      opts.HTTP,
 		logger:     opts.Logger,
 		dispatcher: opts.Dispatcher,
+		catalog:    opts.Catalog,
+		remover:    opts.Remover,
 	}
 }
 
@@ -52,6 +63,8 @@ func (f *Factory) Build(bot *domain.Bot) (platform.Listener, error) {
 		HTTP:       f.httpC,
 		Logger:     f.logger,
 		Dispatcher: f.dispatcher,
+		Catalog:    f.catalog,
+		Remover:    f.remover,
 	})
 }
 

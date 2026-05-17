@@ -141,6 +141,36 @@ func (r *CommandRepo) GetByBotAndName(ctx context.Context, botID int64, name str
 	return scanCommand(row)
 }
 
+// ListByBot returns every ENABLED command owned by the same tenant as
+// botID. Used by the Telegram listener's setMyCommands publisher and
+// /commands built-in: both publish a public catalog, so disabled rows
+// MUST stay hidden (same "disabled = absent" rule the dispatcher uses).
+//
+// botID is the PulseGuard DB primary key (bots.id), NOT the Telegram
+// numeric token prefix — same convention as GetByBotAndName.
+func (r *CommandRepo) ListByBot(ctx context.Context, botID int64) ([]*domain.Command, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT c.id, c.tenant_id, c.name, c.description, c.code, c.enabled, c.created_at, c.updated_at
+		  FROM commands c
+		  JOIN bots b ON b.tenant_id = c.tenant_id
+		 WHERE b.id = ?
+		   AND c.enabled = 1
+		 ORDER BY c.id ASC`, botID)
+	if err != nil {
+		return nil, fmt.Errorf("list commands by bot: %w", err)
+	}
+	defer rows.Close()
+	var out []*domain.Command
+	for rows.Next() {
+		c, err := scanCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func scanCommand(s interface {
 	Scan(dest ...any) error
 }) (*domain.Command, error) {

@@ -63,6 +63,37 @@ type CommandDispatcher interface {
 	Dispatch(ctx context.Context, in DispatchInput) (DispatchOutput, error)
 }
 
+// CommandCatalog enumerates the enabled custom commands that belong to
+// this listener's bot. Used by the listener to advertise its slash
+// menu via Telegram setMyCommands on startup and to power built-in
+// helpers like /commands and /unsubscribe. List MUST only return
+// enabled rows — the listener treats the result as the public catalog.
+//
+// botID is the PulseGuard DB primary key (bots.id), matching the same
+// key the CommandResolver in cmdrun uses, NOT the numeric Telegram
+// token prefix. Conflating the two silently empties the catalog.
+type CommandCatalog interface {
+	ListByBot(ctx context.Context, botID int64) ([]CommandSummary, error)
+}
+
+// CommandSummary is the listener-facing projection of a custom command.
+// Only the public-safe fields ("/name" without leading slash + the user-
+// visible description) cross the boundary; the underlying Starlark code
+// stays in the runtime layer.
+type CommandSummary struct {
+	Name        string
+	Description string
+}
+
+// SubscriberRemover deletes a (bot, chat, command-name) subscription
+// row. Used by the listener's built-in /unsubscribe command so users
+// can opt out of a custom command without involving the operator.
+// Returns ErrNotFound when no row matches (the listener turns that
+// into a friendly Chinese reply).
+type SubscriberRemover interface {
+	DeleteByChatAndCommand(ctx context.Context, botID int64, chatID, commandName string) error
+}
+
 // DispatchInput is the listener → dispatcher contract.
 type DispatchInput struct {
 	BotID  int64
@@ -118,6 +149,8 @@ type Listener struct {
 	tenantID   int64
 	logger     *slog.Logger
 	dispatcher CommandDispatcher
+	catalog    CommandCatalog    // optional: powers setMyCommands + /commands
+	remover    SubscriberRemover // optional: powers /unsubscribe
 }
 
 // Options bundles the optional knobs. apiBase defaults to
@@ -127,11 +160,19 @@ type Listener struct {
 // Dispatcher, when non-nil, enables custom-command handling. When nil
 // the listener only answers /start, /chatid, and the bot-joined-group
 // event (legacy MVP behaviour).
+//
+// Catalog, when non-nil, is consulted exactly once on Run startup so
+// the listener can publish its slash menu via setMyCommands. It also
+// backs the built-in /commands helper.
+//
+// Remover, when non-nil, powers the built-in /unsubscribe command.
 type Options struct {
 	APIBase    string
 	HTTP       *http.Client
 	Logger     *slog.Logger
 	Dispatcher CommandDispatcher
+	Catalog    CommandCatalog
+	Remover    SubscriberRemover
 }
 
 // New constructs a Listener for the supplied bot. The bot's BotToken
@@ -173,6 +214,8 @@ func New(bot *domain.Bot, opts Options) (*Listener, error) {
 		tenantID:   bot.TenantID,
 		logger:     logger,
 		dispatcher: opts.Dispatcher,
+		catalog:    opts.Catalog,
+		remover:    opts.Remover,
 	}, nil
 }
 
@@ -202,6 +245,23 @@ func (l *Listener) Run(ctx context.Context) error {
 		"tenant_id", l.tenantID,
 		"dispatcher", l.dispatcher != nil)
 	defer l.logger.Info("telegram: listener stopped", "bot_id", l.botID)
+
+	// Publish the slash menu on startup so users see the tenant's
+	// custom commands in the Telegram UI command picker. Failures here
+	// are advisory only — they must NEVER abort the listener loop. A
+	// short context isolates the HTTP call from getUpdates cancellation
+	// semantics; even a slow Telegram backend just logs a warn.
+	if l.catalog != nil {
+		setCtx, setCancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := l.publishCommands(setCtx); err != nil {
+			l.logger.Warn("telegram: setMyCommands failed",
+				"bot_id", l.botID,
+				"tenant_id", l.tenantID,
+				"err", err.Error())
+		}
+		setCancel()
+	}
+
 	var offset int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -244,6 +304,74 @@ func (l *Listener) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// publishCommands calls Telegram's setMyCommands so the bot's slash
+// menu in the Telegram app surfaces every enabled custom command for
+// this tenant. The catalog is consulted via the bot's DB primary key
+// (NOT the Telegram numeric token-prefix id) — same convention as the
+// dispatcher.
+//
+// Telegram's API expects a "/cmd" name WITHOUT the leading slash and
+// a non-empty description. Commands stored as "/echo" in the catalog
+// surface as "echo" here; descriptions falling back to "(no description)"
+// because TG rejects empty strings outright.
+//
+// Errors are non-fatal — callers log and continue. A 200 with ok=false
+// is treated as an error so a Telegram-side parse failure surfaces in
+// the operator log rather than silently dropping the menu.
+func (l *Listener) publishCommands(ctx context.Context) error {
+	cmds, err := l.catalog.ListByBot(ctx, l.dbBotID)
+	if err != nil {
+		return fmt.Errorf("catalog: %w", err)
+	}
+	type wireCmd struct {
+		Command     string `json:"command"`
+		Description string `json:"description"`
+	}
+	wire := make([]wireCmd, 0, len(cmds))
+	for _, c := range cmds {
+		name := strings.TrimPrefix(strings.TrimSpace(c.Name), "/")
+		if name == "" {
+			continue
+		}
+		desc := strings.TrimSpace(c.Description)
+		if desc == "" {
+			desc = "(no description)"
+		}
+		wire = append(wire, wireCmd{Command: name, Description: desc})
+	}
+	body, err := json.Marshal(map[string]any{"commands": wire})
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	u := l.apiBase + "/bot" + url.PathEscape(l.botToken) + "/setMyCommands"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := l.httpC.Do(req)
+	if err != nil {
+		return fmt.Errorf("transport: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("status %d: %s", resp.StatusCode, truncForLog(respBody))
+	}
+	// Best-effort body parse: any ok=false surfaces as an error so the
+	// operator can fix a malformed description without scanning HTTP 200s.
+	var env struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(respBody, &env); err == nil && !env.OK {
+		return fmt.Errorf("ok=false: %s", env.Description)
+	}
+	l.logger.Info("telegram: setMyCommands published",
+		"bot_id", l.botID, "count", len(wire))
+	return nil
 }
 
 // handle inspects a single update and replies if the user typed an

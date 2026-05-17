@@ -40,6 +40,16 @@ type fakeTG struct {
 	statusForSendMessage int
 
 	getUpdatesCalls int32
+
+	// setMyCommandsCalls captures every setMyCommands invocation so
+	// tests can assert that listener startup publishes the slash menu
+	// exactly once. Body is the raw POST payload as the listener sent
+	// it; tests grep for "commands" / individual command names.
+	setMyCommandsCalls []setMyCmdCall
+}
+
+type setMyCmdCall struct {
+	Body string
 }
 
 type fakeResp struct {
@@ -101,6 +111,16 @@ func (f *fakeTG) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"ok":false,"error_code":`+fmt.Sprint(st)+`,"description":"err"}`)
 		return
 	}
+	if strings.Contains(r.URL.Path, "/setMyCommands") {
+		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.setMyCommandsCalls = append(f.setMyCommandsCalls, setMyCmdCall{Body: string(body)})
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+		return
+	}
 	w.WriteHeader(404)
 }
 
@@ -121,6 +141,18 @@ func (f *fakeTG) sentSnapshot() []sentMsg {
 	defer f.mu.Unlock()
 	out := make([]sentMsg, len(f.sent))
 	copy(out, f.sent)
+	return out
+}
+
+// setMyCommandsSnapshot returns a copy of every setMyCommands payload
+// the listener POSTed so tests can assert (a) startup publishes the
+// menu exactly once and (b) the JSON body contains the expected
+// command names.
+func (f *fakeTG) setMyCommandsSnapshot() []setMyCmdCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]setMyCmdCall, len(f.setMyCommandsCalls))
+	copy(out, f.setMyCommandsCalls)
 	return out
 }
 
@@ -505,5 +537,89 @@ func TestFactoryRejectsBadBot(t *testing.T) {
 	f := NewFactory(FactoryOptions{})
 	if _, err := f.Build(&domain.Bot{ID: 1, BotToken: "bad-no-colon"}); err == nil {
 		t.Fatal("expected error from Build with malformed token")
+	}
+}
+
+// fakeCatalog scriptable telegram.CommandCatalog used to assert that
+// listener startup publishes the slash menu via setMyCommands. Calls
+// is recorded so we can verify the catalog is consulted exactly once.
+type fakeCatalog struct {
+	mu    sync.Mutex
+	rows  []CommandSummary
+	calls int
+}
+
+func (c *fakeCatalog) ListByBot(_ context.Context, _ int64) ([]CommandSummary, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	out := make([]CommandSummary, len(c.rows))
+	copy(out, c.rows)
+	return out, nil
+}
+
+func (c *fakeCatalog) Calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func TestListener_SetMyCommandsPublishedOnStartup(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	cat := &fakeCatalog{rows: []CommandSummary{
+		{Name: "/echo", Description: "echo the args"},
+		{Name: "查询", Description: "查询订单"},
+		{Name: "/blank", Description: ""}, // exercises fallback
+	}}
+	l, err := New(botFixture(), Options{
+		APIBase: srv.URL,
+		HTTP:    srv.Client(),
+		Logger:  quietLogger(),
+		Catalog: cat,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- l.Run(ctx) }()
+	defer func() { cancel(); <-errCh }()
+
+	eventually(t, 3*time.Second, func() bool {
+		return len(srv.setMyCommandsSnapshot()) >= 1
+	})
+	calls := srv.setMyCommandsSnapshot()
+	if got := len(calls); got != 1 {
+		t.Fatalf("setMyCommands call count = %d, want exactly 1 on startup", got)
+	}
+	if cat.Calls() != 1 {
+		t.Fatalf("catalog.ListByBot called %d times, want 1", cat.Calls())
+	}
+	body := calls[0].Body
+	// JSON body must carry "commands" and each command name WITHOUT
+	// leading slash. Empty descriptions fall back to "(no description)".
+	for _, frag := range []string{`"commands"`, `"echo"`, `"查询"`, `"blank"`, `"(no description)"`} {
+		if !strings.Contains(body, frag) {
+			t.Fatalf("setMyCommands body missing fragment %q; got: %s", frag, body)
+		}
+	}
+	if strings.Contains(body, `"/echo"`) {
+		t.Fatalf("command name leaked leading slash: %s", body)
+	}
+}
+
+func TestListener_SetMyCommandsSkippedWhenNoCatalog(t *testing.T) {
+	srv := newFakeTG()
+	defer srv.Close()
+	// No catalog wired — listener must NOT call setMyCommands.
+	cancel, errCh := startListener(t, srv, botFixture())
+	defer func() { cancel(); <-errCh }()
+
+	// Wait for at least one getUpdates round so the loop has finished
+	// startup; setMyCommands either happens before or never.
+	eventually(t, 3*time.Second, func() bool { return atomic.LoadInt32(&srv.getUpdatesCalls) >= 1 })
+	if got := len(srv.setMyCommandsSnapshot()); got != 0 {
+		t.Fatalf("setMyCommands called %d times without a catalog, want 0", got)
 	}
 }
