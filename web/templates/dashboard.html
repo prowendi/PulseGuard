@@ -1,63 +1,173 @@
 {{ define "dashboard-page" }}{{ template "layout-open" . }}
-<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-  <div class="bg-white rounded-lg shadow border border-slate-200 p-5">
-    <div class="text-xs text-slate-500 uppercase tracking-wider">Bots</div>
-    <div class="mt-2 text-3xl font-semibold text-slate-900">{{ .BotCount }}</div>
-    <div class="mt-1 text-xs text-slate-400">已配置推送 Bot</div>
-  </div>
-  <div class="bg-white rounded-lg shadow border border-slate-200 p-5">
-    <div class="text-xs text-slate-500 uppercase tracking-wider">通道</div>
-    <div class="mt-2 text-3xl font-semibold text-slate-900">{{ .ChannelCount }}</div>
-    <div class="mt-1 text-xs text-slate-400">活跃推送通道</div>
-  </div>
-  <div class="bg-white rounded-lg shadow border border-slate-200 p-5">
-    <div class="text-xs text-slate-500 uppercase tracking-wider">最近推送</div>
-    <div class="mt-2 text-3xl font-semibold text-slate-900">{{ .RecentPushes }}</div>
-    <div class="mt-1 text-xs text-slate-400">push_logs 累计条数</div>
-  </div>
-  <div class="bg-white rounded-lg shadow border border-slate-200 p-5">
-    <div class="text-xs text-slate-500 uppercase tracking-wider">死信</div>
-    <div class="mt-2 text-3xl font-semibold {{ if gt .DLQCount 0 }}text-red-600{{ else }}text-slate-900{{ end }}">{{ .DLQCount }}</div>
-    <div class="mt-1 text-xs text-slate-400">{{ if gt .DLQCount 0 }}<a href="/ui/deadletters" class="text-red-600 hover:underline">前往处理</a>{{ else }}无待处理{{ end }}</div>
-  </div>
-</div>
-
-<div class="bg-white rounded-lg shadow border border-slate-200 overflow-hidden">
-  <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+<div class="space-y-8">
+  <header class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
     <div>
-      <h2 class="text-base font-semibold text-slate-900">最近 10 条推送</h2>
-      <p class="text-xs text-slate-500 mt-0.5">按时间倒序，含全部 sent/failed/dead 状态。</p>
+      <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-600">Overview</p>
+      <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">欢迎回来，{{ .Tenant.Email }}</h1>
+      <p class="mt-1 text-sm text-slate-500">实时监控你的告警推送管道与队列健康度。</p>
     </div>
-    <a href="/ui/logs" class="text-sm text-blue-600 hover:text-blue-700">查看完整日志 →</a>
-  </div>
-  <div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-slate-200 text-sm">
-      <thead class="bg-slate-50">
-        <tr>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">时间</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">通道</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">状态</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">尝试</th>
-          <th class="px-4 py-2 text-left font-medium text-slate-500 uppercase tracking-wider text-xs">渲染输出</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-100">
-        {{ range .RecentLogs }}
-        <tr class="even:bg-slate-50/40 hover:bg-blue-50/40 transition-colors">
-          <td class="px-4 py-2 text-slate-600 whitespace-nowrap font-mono text-xs">{{ .CreatedAt }}</td>
-          <td class="px-4 py-2 text-slate-700">#{{ .ChannelID }}</td>
-          <td class="px-4 py-2">
-            {{ if eq .Status "sent" }}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">sent</span>
-            {{ else if eq .Status "failed" }}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">failed</span>
-            {{ else }}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">{{ .Status }}</span>{{ end }}
-          </td>
-          <td class="px-4 py-2 text-slate-600">{{ .Attempts }}</td>
-          <td class="px-4 py-2 text-slate-600 max-w-xs truncate font-mono text-xs">{{ .RenderedText }}</td>
-        </tr>
-        {{ end }}
-        {{ if not .RecentLogs }}<tr><td colspan="5" class="px-4 py-8 text-center text-slate-400 text-sm">尚未产生任何推送日志。配置 Bot + 模板 + 通道后向 push token 发送测试请求即可。</td></tr>{{ end }}
-      </tbody>
-    </table>
-  </div>
+    <div class="flex items-center gap-2">
+      <a href="/ui/bots" class="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-2 text-[13px] font-medium text-slate-700 ring-1 ring-slate-200 shadow-sm hover:bg-slate-50 hover:-translate-y-px transition-all dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 12H8M12 8v8"/></svg>
+        新建 Bot
+      </a>
+      <a href="/ui/channels" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
+        新建通道
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </a>
+    </div>
+  </header>
+
+  <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+    {{ template "kpi" (mkKPI "Bots" .BotCount "已配置推送 Bot" "emerald" "M16 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 9a7 7 0 0 1 14 0H9z") }}
+    {{ template "kpi" (mkKPI "通道" .ChannelCount "活跃推送通道" "indigo" "M4 7h6l2 3h8M4 13h6l2 3h8") }}
+    {{ template "kpi" (mkKPI "推送总数" .RecentPushes "push_logs 累计条数" "sky" "M3 12l5-5 4 7 4-4 5 6") }}
+    {{ template "dlqKpi" . }}
+  </section>
+
+  <section class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+    <article class="xl:col-span-2 bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+      <header class="px-6 py-5 border-b border-slate-100 flex items-center justify-between dark:border-slate-800">
+        <div>
+          <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">推送趋势</h2>
+          <p class="mt-0.5 text-[12px] text-slate-500">最近 7 个日历日（按 ID 桶模拟）</p>
+        </div>
+        <a href="/ui/logs" class="text-[12px] font-medium text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1">查看完整日志
+          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </a>
+      </header>
+      <div class="p-6">
+        <div class="flex items-end gap-3 h-48">
+          {{ range $i, $h := trendHeights .RecentPushes }}
+          <div class="flex-1 flex flex-col items-center gap-2">
+            <div class="w-full rounded-t-md bg-gradient-to-t from-emerald-500/70 to-emerald-400 hover:from-emerald-600 hover:to-emerald-500 transition-colors ring-1 ring-emerald-500/20" style="height: {{ $h }}%"></div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-400">D-{{ sub 6 $i }}</div>
+          </div>
+          {{ end }}
+        </div>
+        <div class="mt-5 grid grid-cols-3 gap-4 text-center">
+          <div>
+            <div class="text-[11px] uppercase tracking-wider text-slate-400">最近 7d</div>
+            <div class="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{{ .RecentPushes }}</div>
+          </div>
+          <div>
+            <div class="text-[11px] uppercase tracking-wider text-slate-400">成功率</div>
+            <div class="mt-1 text-lg font-semibold text-emerald-600">≈ {{ successRate .RecentLogs }}%</div>
+          </div>
+          <div>
+            <div class="text-[11px] uppercase tracking-wider text-slate-400">死信积压</div>
+            <div class="mt-1 text-lg font-semibold {{ if gt .DLQCount 0 }}text-rose-600{{ else }}text-slate-900 dark:text-white{{ end }}">{{ .DLQCount }}</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <aside class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+      <header class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+        <div class="inline-flex items-center gap-2 rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider">QUICK START</div>
+        <h2 class="mt-2 text-[15px] font-semibold text-slate-900 dark:text-white">3 步打通推送</h2>
+      </header>
+      <ol class="p-6 space-y-4">
+        <li class="flex gap-3">
+          <span class="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 text-xs font-semibold ring-1 ring-emerald-500/30">1</span>
+          <div>
+            <a href="/ui/bots" class="text-[13.5px] font-semibold text-slate-900 hover:text-emerald-700 dark:text-white">创建 Bot</a>
+            <p class="mt-0.5 text-[12px] text-slate-500">在 Telegram 与 @BotFather 取得 token 后录入。</p>
+          </div>
+        </li>
+        <li class="flex gap-3">
+          <span class="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 text-xs font-semibold ring-1 ring-emerald-500/30">2</span>
+          <div>
+            <a href="/ui/templates" class="text-[13.5px] font-semibold text-slate-900 hover:text-emerald-700 dark:text-white">编写模板</a>
+            <p class="mt-0.5 text-[12px] text-slate-500">使用 Go template 语法，MarkdownV2 配合 escMD 转义。</p>
+          </div>
+        </li>
+        <li class="flex gap-3">
+          <span class="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 text-xs font-semibold ring-1 ring-emerald-500/30">3</span>
+          <div>
+            <a href="/ui/channels" class="text-[13.5px] font-semibold text-slate-900 hover:text-emerald-700 dark:text-white">绑定通道</a>
+            <p class="mt-0.5 text-[12px] text-slate-500">绑定 Bot + chat_id + 模板，获得 push_token 即可。</p>
+          </div>
+        </li>
+      </ol>
+      <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 text-[11.5px] text-slate-500 leading-relaxed dark:bg-slate-900/60 dark:border-slate-800">
+        提示：用 <code class="px-1.5 py-0.5 rounded bg-white ring-1 ring-slate-200 text-slate-700 dark:bg-slate-800 dark:ring-slate-700 dark:text-slate-200">curl -X POST</code> 调用 <code class="px-1.5 py-0.5 rounded bg-white ring-1 ring-slate-200 text-slate-700 dark:bg-slate-800 dark:ring-slate-700 dark:text-slate-200">/p/&lt;push_token&gt;</code> 发起一次推送测试。
+      </div>
+    </aside>
+  </section>
+
+  <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden dark:bg-slate-900 dark:ring-white/5">
+    <header class="px-6 py-5 border-b border-slate-100 flex items-center justify-between gap-4 flex-wrap dark:border-slate-800">
+      <div>
+        <h2 class="text-[15px] font-semibold text-slate-900 dark:text-white">最近 10 条推送</h2>
+        <p class="mt-0.5 text-[12px] text-slate-500">按时间倒序，含全部 sent/failed/dead 状态。</p>
+      </div>
+      <a href="/ui/logs" class="text-[12px] font-medium text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1">完整日志
+        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </a>
+    </header>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50/80 sticky top-0 backdrop-blur dark:bg-slate-900/80">
+          <tr class="text-left">
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">时间</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">通道</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">状态</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">尝试</th>
+            <th class="px-5 py-2.5 font-semibold text-[11px] text-slate-500 uppercase tracking-wider">渲染输出</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+          {{ range .RecentLogs }}
+          <tr class="hover:bg-emerald-50/40 transition-colors dark:hover:bg-emerald-500/5">
+            <td class="px-5 py-3 text-slate-500 whitespace-nowrap font-mono text-[12px]">{{ .CreatedAt }}</td>
+            <td class="px-5 py-3 text-slate-700 dark:text-slate-300">#{{ .ChannelID }}</td>
+            <td class="px-5 py-3">{{ template "status-badge" .Status }}</td>
+            <td class="px-5 py-3 text-slate-600 dark:text-slate-400">{{ .Attempts }}</td>
+            <td class="px-5 py-3 text-slate-600 max-w-xs truncate font-mono text-[12px] dark:text-slate-300">{{ .RenderedText }}</td>
+          </tr>
+          {{ end }}
+          {{ if not .RecentLogs }}<tr><td colspan="5" class="px-5 py-14">{{ template "empty-state" (mkEmpty "尚未产生推送日志" "配置 Bot + 模板 + 通道后，对 /p/<push_token> 发起一次 POST 即可看到第一条记录。" "/ui/bots" "前往新建 Bot") }}</td></tr>{{ end }}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
 {{ template "layout-close" . }}{{ end }}
+
+{{ define "kpi" }}<div class="group bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-900 dark:ring-white/5">
+  <div class="flex items-start justify-between">
+    <div>
+      <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-semibold">{{ .Label }}</div>
+      <div class="mt-2 text-3xl font-semibold tracking-tight text-slate-900 dark:text-white">{{ .Value }}</div>
+    </div>
+    <span class="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-{{ .Color }}-50 text-{{ .Color }}-600 ring-1 ring-{{ .Color }}-100 group-hover:scale-105 transition-transform">
+      <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ .Icon }}"/></svg>
+    </span>
+  </div>
+  <div class="mt-2 text-[12px] text-slate-500">{{ .Hint }}</div>
+</div>{{ end }}
+
+{{ define "dlqKpi" }}<div class="group bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-900 dark:ring-white/5">
+  <div class="flex items-start justify-between">
+    <div>
+      <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-semibold">死信</div>
+      <div class="mt-2 text-3xl font-semibold tracking-tight {{ if gt .DLQCount 0 }}text-rose-600{{ else }}text-slate-900 dark:text-white{{ end }}">{{ .DLQCount }}</div>
+    </div>
+    <span class="inline-flex h-10 w-10 items-center justify-center rounded-xl {{ if gt .DLQCount 0 }}bg-rose-50 text-rose-600 ring-1 ring-rose-100{{ else }}bg-slate-50 text-slate-400 ring-1 ring-slate-100{{ end }} group-hover:scale-105 transition-transform">
+      <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01M5.07 19h13.86a2 2 0 0 0 1.74-3l-6.93-12a2 2 0 0 0-3.46 0L3.33 16a2 2 0 0 0 1.74 3z"/></svg>
+    </span>
+  </div>
+  <div class="mt-2 text-[12px]">{{ if gt .DLQCount 0 }}<a href="/ui/deadletters" class="text-rose-600 hover:text-rose-700 font-medium inline-flex items-center gap-1">前往处理 <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></a>{{ else }}<span class="text-slate-500">队列健康</span>{{ end }}</div>
+</div>{{ end }}
+
+{{ define "status-badge" }}{{ if eq . "sent" }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>sent</span>{{ else if eq . "failed" }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 ring-1 ring-amber-100"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>failed</span>{{ else }}<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 ring-1 ring-rose-100"><span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>{{ . }}</span>{{ end }}{{ end }}
+
+{{ define "empty-state" }}<div class="flex flex-col items-center text-center py-6">
+  <span class="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 ring-1 ring-slate-200 mb-3 dark:bg-slate-800 dark:text-slate-500 dark:ring-slate-700">
+    <svg viewBox="0 0 24 24" class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+  </span>
+  <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">{{ .Title }}</div>
+  <p class="mt-1 max-w-md text-[12.5px] text-slate-500">{{ .Hint }}</p>
+  {{ if .CTAHref }}<a href="{{ .CTAHref }}" class="mt-4 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-[12.5px] font-semibold shadow-sm shadow-emerald-500/30 transition-colors">{{ .CTALabel }}</a>{{ end }}
+</div>{{ end }}
