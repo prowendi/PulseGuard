@@ -390,3 +390,101 @@ func (fc *fakeClock) advance(d time.Duration) {
 	defer fc.mu.Unlock()
 	fc.now = fc.now.Add(d)
 }
+
+// TestOAuth_M1_DifferentKeysDoNotBlock proves the M-1 fix: a slow
+// Lark response for app_id A must NOT block a concurrent Token() call
+// for app_id B. Before the singleflight refactor the call would have
+// queued behind the global mutex; with per-key dedup it runs in
+// parallel.
+func TestOAuth_M1_DifferentKeysDoNotBlock(t *testing.T) {
+	const slowDelay = 500 * time.Millisecond
+
+	srv := newOAuthFakeServer(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		// Differentiate per app_id payload: "slow_app" sleeps before
+		// responding; everyone else responds immediately. Both still
+		// return a valid token + expire.
+		if strings.Contains(string(body), `"app_id":"slow_app"`) {
+			time.Sleep(slowDelay)
+			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"t-slow","expire":7200}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"t-fast","expire":7200}`))
+	})
+	defer srv.Close()
+	c := newOAuthClientWithBase(srv.URL, 5*time.Second, nil)
+
+	// Launch the slow caller; give it a moment to enter the http.Do
+	// inside fetchToken. With the M-1 refactor the singleflight call
+	// for "slow_app" should now be the only barrier — "fast_app" runs
+	// through its own singleflight Group entry concurrently.
+	slowDone := make(chan struct{})
+	go func() {
+		defer close(slowDone)
+		_, _ = c.Token(context.Background(), "slow_app", "s")
+	}()
+	time.Sleep(50 * time.Millisecond) // let the goroutine reach http.Do
+
+	start := time.Now()
+	tok, err := c.Token(context.Background(), "fast_app", "f")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("fast Token err: %v", err)
+	}
+	if tok != "t-fast" {
+		t.Fatalf("fast token = %q", tok)
+	}
+	// "fast_app" should resolve well under the slow window. We allow a
+	// generous 200ms ceiling for scheduling slack on shared CI; the
+	// pre-M-1 behaviour would have blocked for the full 500ms.
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("fast Token waited %v — slow tenant blocked us (M-1 regression)", elapsed)
+	}
+
+	// Let the slow call finish so the test cleans up tidily.
+	<-slowDone
+}
+
+// TestOAuth_M1_SameKeyCoalesces proves the dedup invariant still
+// holds: 10 concurrent callers for the SAME (app_id, app_secret) pair
+// must collapse to a single HTTP fetch.
+func TestOAuth_M1_SameKeyCoalesces(t *testing.T) {
+	srv := newOAuthFakeServer(func(w http.ResponseWriter, r *http.Request) {
+		// Small artificial delay so the callers have time to pile up
+		// behind the singleflight Group before the first one returns.
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"t-shared","expire":7200}`))
+	})
+	defer srv.Close()
+	c := newOAuthClientWithBase(srv.URL, 5*time.Second, nil)
+
+	const callers = 10
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	tokens := make([]string, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			tokens[i], errs[i] = c.Token(context.Background(), "shared_app", "s")
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d err: %v", i, err)
+		}
+		if tokens[i] != "t-shared" {
+			t.Fatalf("caller %d token = %q", i, tokens[i])
+		}
+	}
+	// 10 callers, but at most 1 network call (thundering-herd
+	// prevention). The cached-after-first-hit case might also produce
+	// 1 — anything > 1 means the dedup is broken.
+	if got := srv.calls(); got != 1 {
+		t.Fatalf("server hit %d times, want exactly 1 (singleflight dedup broken)", got)
+	}
+}
