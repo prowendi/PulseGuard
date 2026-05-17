@@ -4,22 +4,47 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/wendi/pulseguard/internal/condeval"
 	"github.com/wendi/pulseguard/internal/domain"
 	wmw "github.com/wendi/pulseguard/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
 )
 
+// validateConditions parses every non-empty condition string and
+// surfaces the first parse failure as a 400 with the offending input
+// + index in the message. An empty (or whitespace-only) entry is
+// always valid — it is the "default-eligible only" sentinel callers
+// use to opt a binding out of auto-routing.
+func validateConditions(w http.ResponseWriter, r *http.Request, conditions []string) bool {
+	for i, raw := range conditions {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		if _, err := condeval.Parse(s); err != nil {
+			writeError(w, r, http.StatusBadRequest, "VALIDATION",
+				fmt.Sprintf("condition[%d] invalid: %s", i, err.Error()))
+			return false
+		}
+	}
+	return true
+}
+
 // channelTemplateBindingView is the JSON shape of a single channel ↔
 // template binding exposed by the API. is_default flags which one is
-// the implicit pick when push omits the ?template= query string.
+// the implicit pick when push omits the ?template= query string;
+// condition is the optional `field op value` expression evaluated by
+// the worker (internal/condeval) for auto-routing.
 type channelTemplateBindingView struct {
-	TemplateID int64 `json:"template_id"`
-	IsDefault  bool  `json:"is_default"`
-	SortOrder  int   `json:"sort_order"`
+	TemplateID int64  `json:"template_id"`
+	IsDefault  bool   `json:"is_default"`
+	SortOrder  int    `json:"sort_order"`
+	Condition  string `json:"condition"`
 }
 
 type channelView struct {
@@ -43,6 +68,7 @@ func toChannelView(c *domain.Channel) channelView {
 			TemplateID: ct.TemplateID,
 			IsDefault:  ct.IsDefault,
 			SortOrder:  ct.SortOrder,
+			Condition:  ct.Condition,
 		})
 	}
 	return channelView{
@@ -63,30 +89,34 @@ func toChannelView(c *domain.Channel) channelView {
 // channelCreatePayload accepts the new multi-template binding shape.
 // TemplateIDs is the full set to bind; DefaultTemplateID names which
 // one is the default. When DefaultTemplateID is zero the first entry
-// in TemplateIDs is auto-promoted.
+// in TemplateIDs is auto-promoted. Conditions, when present, applies
+// per-binding in the same index order as TemplateIDs — a shorter list
+// (or nil) leaves the trailing entries with empty conditions.
 type channelCreatePayload struct {
-	Name              string  `json:"name"`
-	BotID             int64   `json:"bot_id"`
-	TemplateIDs       []int64 `json:"template_ids"`
-	DefaultTemplateID int64   `json:"default_template_id"`
-	ChatID            string  `json:"chat_id"`
-	RatePerMin        int     `json:"rate_per_min"`
-	DedupWindowS      int     `json:"dedup_window_s"`
-	Enabled           *bool   `json:"enabled,omitempty"`
+	Name              string   `json:"name"`
+	BotID             int64    `json:"bot_id"`
+	TemplateIDs       []int64  `json:"template_ids"`
+	DefaultTemplateID int64    `json:"default_template_id"`
+	Conditions        []string `json:"conditions,omitempty"`
+	ChatID            string   `json:"chat_id"`
+	RatePerMin        int      `json:"rate_per_min"`
+	DedupWindowS      int      `json:"dedup_window_s"`
+	Enabled           *bool    `json:"enabled,omitempty"`
 }
 
 // channelUpdatePayload mirrors channelCreatePayload. Passing a nil
 // TemplateIDs slice leaves bindings untouched; passing an empty slice
 // (explicit JSON []) wipes them.
 type channelUpdatePayload struct {
-	Name              *string  `json:"name,omitempty"`
-	BotID             *int64   `json:"bot_id,omitempty"`
-	TemplateIDs       *[]int64 `json:"template_ids,omitempty"`
-	DefaultTemplateID *int64   `json:"default_template_id,omitempty"`
-	ChatID            *string  `json:"chat_id,omitempty"`
-	RatePerMin        *int     `json:"rate_per_min,omitempty"`
-	DedupWindowS      *int     `json:"dedup_window_s,omitempty"`
-	Enabled           *bool    `json:"enabled,omitempty"`
+	Name              *string   `json:"name,omitempty"`
+	BotID             *int64    `json:"bot_id,omitempty"`
+	TemplateIDs       *[]int64  `json:"template_ids,omitempty"`
+	DefaultTemplateID *int64    `json:"default_template_id,omitempty"`
+	Conditions        *[]string `json:"conditions,omitempty"`
+	ChatID            *string   `json:"chat_id,omitempty"`
+	RatePerMin        *int      `json:"rate_per_min,omitempty"`
+	DedupWindowS      *int      `json:"dedup_window_s,omitempty"`
+	Enabled           *bool     `json:"enabled,omitempty"`
 }
 
 func installChannelsAPIRoutes(r chi.Router, deps Deps) {
@@ -141,7 +171,7 @@ func apiChannelCreate(deps Deps) http.HandlerFunc {
 		if !checkBotOwnership(w, r, deps, tenant.ID, p.BotID) {
 			return
 		}
-		bindings, ok := buildBindings(w, r, deps, tenant.ID, p.TemplateIDs, p.DefaultTemplateID)
+		bindings, ok := buildBindings(w, r, deps, tenant.ID, p.TemplateIDs, p.DefaultTemplateID, p.Conditions)
 		if !ok {
 			return
 		}
@@ -259,7 +289,11 @@ func apiChannelUpdate(deps Deps) http.HandlerFunc {
 				if p.DefaultTemplateID != nil {
 					def = *p.DefaultTemplateID
 				}
-				bindings, ok := buildBindings(w, r, deps, tenant.ID, *p.TemplateIDs, def)
+				var conds []string
+				if p.Conditions != nil {
+					conds = *p.Conditions
+				}
+				bindings, ok := buildBindings(w, r, deps, tenant.ID, *p.TemplateIDs, def, conds)
 				if !ok {
 					return
 				}
@@ -347,12 +381,19 @@ func checkBotOwnership(w http.ResponseWriter, r *http.Request, deps Deps, tenant
 
 // buildBindings validates every templateID belongs to tenantID and
 // returns the ChannelTemplate slice ready for ReplaceTemplates/Insert.
-// defaultID, if non-zero, must be among templateIDs.
-func buildBindings(w http.ResponseWriter, r *http.Request, deps Deps, tenantID int64, templateIDs []int64, defaultID int64) ([]*domain.ChannelTemplate, bool) {
+// defaultID, if non-zero, must be among templateIDs. conditions is
+// applied positionally — conditions[i] becomes binding[i].Condition.
+// A non-empty condition string must Parse successfully via
+// internal/condeval, otherwise the request is rejected with a 400.
+func buildBindings(w http.ResponseWriter, r *http.Request, deps Deps, tenantID int64, templateIDs []int64, defaultID int64, conditions []string) ([]*domain.ChannelTemplate, bool) {
 	// Dedup template_ids — duplicates trip the PK on channel_templates.
+	// Conditions stay aligned with the ORIGINAL template_ids index so
+	// duplicates do not silently shift downstream entries; track the
+	// first-seen index for each template id.
 	seen := map[int64]bool{}
+	firstIdx := map[int64]int{}
 	clean := make([]int64, 0, len(templateIDs))
-	for _, id := range templateIDs {
+	for i, id := range templateIDs {
 		if id == 0 {
 			writeError(w, r, http.StatusBadRequest, "VALIDATION", "template_id 0 is invalid")
 			return nil, false
@@ -361,6 +402,7 @@ func buildBindings(w http.ResponseWriter, r *http.Request, deps Deps, tenantID i
 			continue
 		}
 		seen[id] = true
+		firstIdx[id] = i
 		clean = append(clean, id)
 	}
 	if defaultID != 0 && !seen[defaultID] {
@@ -378,6 +420,11 @@ func buildBindings(w http.ResponseWriter, r *http.Request, deps Deps, tenantID i
 			return nil, false
 		}
 	}
+	// Validate each condition string. The empty string is always valid
+	// (it is the "default-eligible only" sentinel); non-empty must parse.
+	if !validateConditions(w, r, conditions) {
+		return nil, false
+	}
 	out := make([]*domain.ChannelTemplate, 0, len(clean))
 	for i, id := range clean {
 		isDefault := false
@@ -387,10 +434,15 @@ func buildBindings(w http.ResponseWriter, r *http.Request, deps Deps, tenantID i
 		if defaultID != 0 && id == defaultID {
 			isDefault = true
 		}
+		cond := ""
+		if idx := firstIdx[id]; idx < len(conditions) {
+			cond = strings.TrimSpace(conditions[idx])
+		}
 		out = append(out, &domain.ChannelTemplate{
 			TemplateID: id,
 			IsDefault:  isDefault,
 			SortOrder:  i,
+			Condition:  cond,
 		})
 	}
 	return out, true

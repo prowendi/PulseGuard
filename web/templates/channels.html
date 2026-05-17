@@ -37,7 +37,7 @@
             <td class="px-4 py-3"><span class="text-slate-900 font-semibold dark:text-white">{{ .Name }}</span></td>
             <td class="px-4 py-3"><code class="text-[11.5px] text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md font-mono dark:bg-slate-800 dark:text-slate-200">{{ .PushToken }}</code></td>
             <td class="px-4 py-3 text-slate-600 dark:text-slate-300">#{{ .BotID }}</td>
-            <td class="px-4 py-3 text-slate-600 text-[12px] dark:text-slate-300">{{ range $i, $t := .Templates }}{{ if $i }}, {{ end }}<span class="font-mono">#{{ $t.TemplateID }}{{ if $t.IsDefault }}<span class="text-emerald-600">*</span>{{ end }}</span>{{ end }}{{ if not .Templates }}<span class="text-slate-300">—</span>{{ end }}</td>
+            <td class="px-4 py-3 text-slate-600 text-[12px] dark:text-slate-300">{{ range $i, $t := .Templates }}{{ if $i }}<br>{{ end }}<span class="font-mono">#{{ $t.TemplateID }}{{ if $t.IsDefault }}<span class="text-emerald-600">*</span>{{ end }}</span>{{ if $t.Condition }} <span class="text-[11px] text-slate-500" title="auto-route 条件">[{{ $t.Condition }}]</span>{{ end }}{{ end }}{{ if not .Templates }}<span class="text-slate-300">—</span>{{ end }}</td>
             <td class="px-4 py-3 text-slate-600 font-mono text-[12px] dark:text-slate-300">{{ .ChatID }}</td>
             <td class="px-4 py-3 text-slate-600 dark:text-slate-300">{{ .RatePerMin }}/min</td>
             <td class="px-4 py-3 text-slate-600 dark:text-slate-300">{{ .DedupWindowS }}s</td>
@@ -105,12 +105,25 @@
         </select>
       </div>
       <div>
-        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">模板</label>
-        <select name="template_id" required class="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
-          <option value="">请选择…</option>
-          {{ range .Templates }}<option value="{{ .ID }}">{{ .Name }} [{{ .ParseMode }}]</option>{{ end }}
-        </select>
-        <p class="mt-1.5 text-[11.5px] text-slate-500">V3.B1 起支持多模板绑定，B1 完成前每通道仍为单模板。</p>
+        <label class="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">模板与条件</label>
+        <p class="mb-2 text-[11.5px] text-slate-500">勾选要绑定的模板；为每个模板设置可选的匹配条件（留空 = 仅作为默认 fallback）。第一个勾选项会自动成为默认模板。</p>
+        <div class="space-y-2">
+          {{ range $i, $t := .Templates }}
+          <div class="flex flex-col gap-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:bg-slate-800/40 dark:border-slate-700">
+            <label class="flex items-center gap-2 text-[13px] text-slate-700 dark:text-slate-200">
+              <input type="checkbox" name="template_ids" value="{{ $t.ID }}" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 dark:bg-slate-900 dark:border-slate-600">
+              <span class="font-semibold">{{ $t.Name }}</span>
+              <span class="text-[11px] text-slate-400">[{{ $t.ParseMode }}]</span>
+            </label>
+            <input type="text" name="conditions" maxlength="200" placeholder="如 level eq critical（留空 = 默认）"
+                   class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[12px] font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-emerald-500 transition-all dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200">
+          </div>
+          {{ end }}
+          {{ if not .Templates }}
+          <p class="text-[12px] text-slate-400">尚未创建任何模板，请先到「模板」页新建。</p>
+          {{ end }}
+        </div>
+        <p class="mt-2 text-[11px] text-slate-400">支持 op：eq / ne / in / startswith / endswith / contains / gt / lt / ge / le。例：<code class="font-mono">value gt 90</code>。</p>
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div class="psg-float-wrap">

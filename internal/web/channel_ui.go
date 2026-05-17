@@ -50,7 +50,9 @@ func uiChannelCreate(deps Deps) http.HandlerFunc {
 		// Multi-select templates: form sends every checked id under
 		// the same key ("template_ids"); default is a single id under
 		// "default_template_id". If only one template_id arrived
-		// (legacy single-select form fall-back), accept it too.
+		// (legacy single-select form fall-back), accept it too. The
+		// optional "conditions" repeats the same number of values, one
+		// per template_ids entry in order.
 		var templateIDs []int64
 		for _, v := range r.PostForm["template_ids"] {
 			if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
@@ -63,6 +65,7 @@ func uiChannelCreate(deps Deps) http.HandlerFunc {
 				templateIDs = append(templateIDs, id)
 			}
 		}
+		conditions := r.PostForm["conditions"]
 		defID, _ := strconv.ParseInt(r.PostForm.Get("default_template_id"), 10, 64)
 
 		if name == "" || botID == 0 || chatID == "" || len(templateIDs) == 0 {
@@ -74,7 +77,7 @@ func uiChannelCreate(deps Deps) http.HandlerFunc {
 			renderChannelPage(w, r, deps, tenant, &flash{Level: "error", Message: "bot 不存在或不属于当前租户"})
 			return
 		}
-		bindings, err := buildUIBindings(r.Context(), deps, tenant.ID, templateIDs, defID)
+		bindings, err := buildUIBindings(r.Context(), deps, tenant.ID, templateIDs, defID, conditions)
 		if err != nil {
 			renderChannelPage(w, r, deps, tenant, &flash{Level: "error", Message: err.Error()})
 			return
