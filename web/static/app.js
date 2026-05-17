@@ -1,6 +1,10 @@
 // PulseGuard glue layer: CSRF header injection for HTMX, toast helper,
 // HTMX response-driven toast trigger, dropdown/user-menu toggles, and a
 // tiny IIFE wrapper so nothing leaks into globals other than psgToast.
+//
+// CSP-strict: this file MUST be the only place that wires DOM events.
+// Inline onclick/onsubmit handlers are forbidden so that script-src can
+// stay at 'self' (no 'unsafe-inline'). See secureheaders.go.
 (function () {
   function readCookie(name) {
     var pairs = (document.cookie || "").split(";");
@@ -12,6 +16,13 @@
       if (k === name) return decodeURIComponent(v);
     }
     return "";
+  }
+
+  // deleteCookie expires the named cookie at "/" so a Set-Cookie max-age
+  // flash can be consumed exactly once per page load. Same Path / SameSite
+  // as the server-side issuer or browsers may not match.
+  function deleteCookie(name) {
+    document.cookie = name + "=; Path=/; Max-Age=0; SameSite=Lax";
   }
 
   // Ensure the toast stack <div> exists exactly once. Idempotent so we
@@ -69,6 +80,94 @@
     }, { capture: true });
   }
 
+  // ---- Global data-action delegation ----------------------------------
+  // One document-level click listener handles every declarative action,
+  // so templates can use plain data-* attributes instead of inline
+  // onclick handlers. Supported actions:
+  //   data-action="drawer-open"    + data-target="drawer-x"
+  //   data-action="drawer-close"   + data-target="drawer-x"
+  //   data-action="copy-to-editor" + data-target="#command-code"
+  //                                + data-code="..." (raw source to inject)
+  // Confirm-on-submit is handled via data-confirm on the form OR on the
+  // submit-triggering button (we register a separate submit listener).
+  function bindActionDelegation() {
+    document.addEventListener("click", function (e) {
+      var node = e.target.closest ? e.target.closest("[data-action]") : null;
+      if (!node) return;
+      var action = node.getAttribute("data-action");
+      if (!action) return;
+      switch (action) {
+        case "drawer-open": {
+          e.preventDefault();
+          var id = node.getAttribute("data-target");
+          if (id && typeof window.psgOpenDrawer === "function") {
+            window.psgOpenDrawer(id);
+          }
+          break;
+        }
+        case "drawer-close": {
+          e.preventDefault();
+          var idc = node.getAttribute("data-target");
+          if (idc && typeof window.psgCloseDrawer === "function") {
+            window.psgCloseDrawer(idc);
+          }
+          break;
+        }
+        case "copy-to-editor": {
+          e.preventDefault();
+          var sel = node.getAttribute("data-target") || "#command-code";
+          var code = node.getAttribute("data-code") || "";
+          var ta = document.querySelector(sel);
+          if (!ta) return;
+          ta.value = code;
+          var drawer = node.getAttribute("data-drawer");
+          if (drawer && typeof window.psgOpenDrawer === "function") {
+            window.psgOpenDrawer(drawer);
+          }
+          try { ta.focus({ preventScroll: true }); } catch (err) { ta.focus(); }
+          break;
+        }
+        default:
+          break;
+      }
+    });
+  }
+
+  // Form-level confirm. The contract is: any <form> with data-confirm="…"
+  // shows that confirmation prompt at submit time; the user can cancel by
+  // clicking "Cancel" which aborts the submission. Mirrors the legacy
+  // onsubmit="return confirm(...)" pattern without inline script.
+  function bindConfirmSubmit() {
+    document.addEventListener("submit", function (e) {
+      var form = e.target;
+      if (!form || form.nodeName !== "FORM") return;
+      var msg = form.getAttribute("data-confirm");
+      if (!msg) return;
+      if (!window.confirm(msg)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }, { capture: true });
+  }
+
+  // Flash cookie consumer. Server-side handlers may set a short-lived
+  // psg_flash cookie shaped "<level>:<message>" after a redirect-after-
+  // POST so we can pop a toast on the next GET without re-rendering the
+  // page-level flash partial. Consumed exactly once.
+  function consumeFlashCookie() {
+    var raw = readCookie("psg_flash");
+    if (!raw) return;
+    deleteCookie("psg_flash");
+    var ix = raw.indexOf(":");
+    var level = "info";
+    var msg = raw;
+    if (ix >= 0) {
+      level = raw.slice(0, ix).trim() || "info";
+      msg = raw.slice(ix + 1).trim();
+    }
+    if (msg) window.psgToast(level, msg);
+  }
+
   // HTMX → CSRF header.
   document.addEventListener("DOMContentLoaded", function () {
     document.body.addEventListener("htmx:configRequest", function (evt) {
@@ -85,16 +184,20 @@
       window.psgToast(hdr.slice(0, ix).trim(), hdr.slice(ix + 1).trim());
     });
     bindToggles();
+    bindActionDelegation();
+    bindConfirmSubmit();
     ensureToastStack();
+    consumeFlashCookie();
   });
   // HTMX swaps may inject new toggle buttons; re-bind after each swap.
   document.addEventListener("htmx:afterSwap", bindToggles);
 
   // ---- Right-side drawer (Linear/Vercel style) -------------------------
-  // Markup contract (inlined per page to avoid template.HTML XSS risk):
+  // Markup contract (data-action wired from app.js — no inline handlers):
   //   <div id="drawer-xxx" class="psg-drawer fixed inset-0 z-40 hidden"
   //        role="dialog" aria-modal="true" aria-labelledby="drawer-xxx-title">
-  //     <div class="psg-drawer-backdrop ..." onclick="psgCloseDrawer('drawer-xxx')"></div>
+  //     <div class="psg-drawer-backdrop ..."
+  //          data-action="drawer-close" data-target="drawer-xxx"></div>
   //     <div class="psg-drawer-panel ... translate-x-full">...</div>
   //   </div>
   // The 300ms slide is owned by Tailwind transition utilities; we toggle

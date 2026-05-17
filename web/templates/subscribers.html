@@ -30,7 +30,7 @@
             <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700">{{ .Platform }}</span></td>
             <td class="px-5 py-3 font-mono text-[12px] text-slate-500">{{ .LastSeenAt }}</td>
             <td class="px-5 py-3 text-right">
-              <form method="POST" action="/ui/subscribers/{{ .ID }}/delete" class="inline" onsubmit="return confirm('确认解除订阅 ?');">
+              <form method="POST" action="/ui/subscribers/{{ .ID }}/delete" class="inline" data-confirm="确认解除订阅 ?">
                 <input type="hidden" name="csrf" value="{{ $.CSRF }}">
                 <button type="submit" class="inline-flex items-center gap-1 text-[12.5px] text-rose-600 hover:text-rose-700 font-medium hover:bg-rose-50 px-2 py-1 rounded transition-colors">解除</button>
               </form>

@@ -6,7 +6,7 @@
       <h1 class="mt-1 text-2xl font-semibold text-slate-900 tracking-tight dark:text-white">消息模板</h1>
       <p class="mt-1 text-sm text-slate-500">支持 Go text/template 全语法；推荐 MarkdownV2，需调用 <code class="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[12px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">escMD</code> 函数转义字段。</p>
     </div>
-    <button type="button" onclick="psgOpenDrawer('drawer-new-tpl')" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
+    <button type="button" data-action="drawer-open" data-target="drawer-new-tpl" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white px-3 py-2 text-[13px] font-semibold shadow-sm shadow-emerald-500/30 transition-all">
       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       新建模板
     </button>
@@ -34,7 +34,7 @@
               <td class="px-5 py-3"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">{{ .ParseMode }}</span></td>
               <td class="px-5 py-3"><pre class="text-[11.5px] text-slate-600 max-w-md max-h-20 overflow-hidden whitespace-pre-wrap font-mono dark:text-slate-300">{{ .Body }}</pre></td>
               <td class="px-5 py-3 text-right">
-                <form method="POST" action="/ui/templates/{{ .ID }}/delete" onsubmit="return confirm('确认删除？');" class="inline">
+                <form method="POST" action="/ui/templates/{{ .ID }}/delete" data-confirm="确认删除？" class="inline">
                   <input type="hidden" name="csrf" value="{{ $csrf }}">
                   <button class="inline-flex items-center gap-1 text-[12.5px] text-rose-600 hover:text-rose-700 font-medium hover:bg-rose-50 px-2 py-1 rounded transition-colors">删除</button>
                 </form>
@@ -71,14 +71,14 @@
 
 <!-- Drawer: 新建模板 ==================================================== -->
 <div id="drawer-new-tpl" class="psg-drawer fixed inset-0 z-40 hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-new-tpl-title">
-  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" onclick="psgCloseDrawer('drawer-new-tpl')"></div>
+  <div class="psg-drawer-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 transition-opacity duration-200" data-action="drawer-close" data-target="drawer-new-tpl"></div>
   <div class="psg-drawer-panel absolute top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col translate-x-full transition-transform duration-300 ease-out dark:bg-slate-900 dark:ring-white/10">
     <header class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
       <div>
         <h2 id="drawer-new-tpl-title" class="text-base font-semibold text-slate-900 dark:text-white">新建模板</h2>
         <p class="mt-0.5 text-[12px] text-slate-500">工具栏快捷插入；Demo Gallery 可一键复制范例到此编辑器。</p>
       </div>
-      <button type="button" onclick="psgCloseDrawer('drawer-new-tpl')" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+      <button type="button" data-action="drawer-close" data-target="drawer-new-tpl" aria-label="关闭" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
         <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
       </button>
     </header>
@@ -115,7 +115,7 @@
       </div>
       <div class="pt-2 flex items-center gap-2">
         <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 active:translate-y-px text-white font-semibold text-[13.5px] px-4 py-2.5 shadow-sm shadow-emerald-500/30 transition-all">创建模板</button>
-        <button type="button" onclick="psgCloseDrawer('drawer-new-tpl')" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
+        <button type="button" data-action="drawer-close" data-target="drawer-new-tpl" class="inline-flex items-center rounded-md border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 px-3 py-2.5 text-[13px] font-medium transition-colors dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">取消</button>
       </div>
     </form>
   </div>

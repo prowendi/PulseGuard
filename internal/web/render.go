@@ -102,11 +102,20 @@ type kpiCard struct {
 }
 
 // emptyState is the projection for the empty-list illustration block.
+//
+// Two CTA shapes are supported and the template chooses based on
+// CTAAction:
+//   - CTAAction == ""   → plain <a href="{{.CTAHref}}">{{.CTALabel}}</a>
+//   - CTAAction != ""   → <button data-action="…" data-target="…">…</button>
+//     for opening drawers without resorting to javascript: URLs (which
+//     are blocked by the strict CSP that disallows 'unsafe-inline').
 type emptyState struct {
-	Title    string
-	Hint     string
-	CTAHref  string
-	CTALabel string
+	Title     string
+	Hint      string
+	CTAHref   string
+	CTALabel  string
+	CTAAction string // e.g. "drawer-open"
+	CTATarget string // e.g. "drawer-new-bot"
 }
 
 // uiFuncs is the helper set available inside HTMX templates.
@@ -151,6 +160,24 @@ var uiFuncs = template.FuncMap{
 		return kpiCard{Label: label, Value: value, Hint: hint, Color: color, Icon: icon}
 	},
 	"mkEmpty": func(title, hint, href, label string) emptyState {
+		// CSP-strict shim: legacy callers pass
+		// "javascript:psgOpenDrawer('drawer-x')" when the CTA should
+		// open a drawer instead of navigating. That inline javascript:
+		// URL is blocked under strict script-src; auto-detect it and
+		// emit a button + data-action so the partial stays self-hosted.
+		const prefix = "javascript:psgOpenDrawer('"
+		if strings.HasPrefix(href, prefix) {
+			rest := strings.TrimPrefix(href, prefix)
+			if end := strings.Index(rest, "'"); end >= 0 {
+				return emptyState{
+					Title:     title,
+					Hint:      hint,
+					CTAAction: "drawer-open",
+					CTATarget: rest[:end],
+					CTALabel:  label,
+				}
+			}
+		}
 		return emptyState{Title: title, Hint: hint, CTAHref: href, CTALabel: label}
 	},
 	// trendHeights produces 7 deterministic but visually pleasant bar
