@@ -23,6 +23,7 @@ import (
 	"github.com/wendi/pulseguard/internal/cmdrun"
 	"github.com/wendi/pulseguard/internal/config"
 	"github.com/wendi/pulseguard/internal/domain"
+	"github.com/wendi/pulseguard/internal/lark"
 	"github.com/wendi/pulseguard/internal/pipeline"
 	"github.com/wendi/pulseguard/internal/platform"
 	"github.com/wendi/pulseguard/internal/platform/telegram"
@@ -137,10 +138,16 @@ func RunWithDeps(ctx context.Context, cfg *config.Config, logger *slog.Logger, o
 	messageThreads := store.NewMessageThreadRepo(db, clock)
 	silences := store.NewSilenceRepo(db, clock)
 
-	// ── 4. Sender (real TG client wrapped in the V7-1/V7-2 adapter
-	// that exposes SendWithOpts + EditMessage on top of the legacy
-	// domain.Sender contract). Tests override with a plain Sender.
-	var sender domain.Sender = newTGSenderAdapter(tg.New(cfg.Telegram))
+	// ── 4. Sender (telegram + lark, multiplexed by token prefix). The
+	// router carries both adapters and dispatches based on the bot
+	// token shape the worker hands it at call time. Existing tests
+	// inject ov.Sender to bypass the network entirely — that override
+	// short-circuits the router so the test sender sees every call
+	// regardless of platform.
+	var sender domain.Sender = newSenderRouter(
+		newTGSenderAdapter(tg.New(cfg.Telegram)),
+		lark.New(cfg.Telegram),
+	)
 	if ov.Sender != nil {
 		sender = ov.Sender
 	}
