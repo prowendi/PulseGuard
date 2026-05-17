@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	pulseguard "github.com/wendi/pulseguard"
-	"github.com/wendi/pulseguard/internal/domain"
 )
 
 // templatesFS returns the templates sub-tree of the embedded WebFS.
@@ -210,33 +209,53 @@ var uiFuncs = template.FuncMap{
 		}
 		return out
 	},
-	// channelBindingsJSON serialises a slice of *domain.ChannelTemplate
-	// down to compact JSON for the channels edit drawer. The HTML
+	// channelBindingsJSON serialises a slice of channel template bindings
+	// (either *domain.ChannelTemplate or channelTemplateBindingView)
+	// into compact JSON for the channels edit drawer. The HTML
 	// attribute escape that html/template applies makes this safe to
-	// embed verbatim in data-bindings="…"; the edit handler in app.js
+	// embed in data-bindings="…"; the edit handler in app.js
 	// JSON.parse()s it back to pre-check the right rows / fill the
-	// condition inputs of the edit drawer.
-	"channelBindingsJSON": func(bs []*domain.ChannelTemplate) string {
-		if len(bs) == 0 {
-			return "[]"
-		}
+	// condition inputs. We accept any so the same helper works whether
+	// the page passes the raw domain slice or the channelView-wrapped
+	// JSON projection (the field names match).
+	"channelBindingsJSON": func(v any) string {
 		type wire struct {
 			TemplateID int64  `json:"template_id"`
 			IsDefault  bool   `json:"is_default"`
 			SortOrder  int    `json:"sort_order"`
 			Condition  string `json:"condition"`
 		}
-		out := make([]wire, 0, len(bs))
-		for _, b := range bs {
-			if b == nil {
+		rv := reflect.ValueOf(v)
+		if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
+			return "[]"
+		}
+		out := make([]wire, 0, rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			el := rv.Index(i)
+			for el.Kind() == reflect.Ptr || el.Kind() == reflect.Interface {
+				if el.IsNil() {
+					el = reflect.Value{}
+					break
+				}
+				el = el.Elem()
+			}
+			if !el.IsValid() || el.Kind() != reflect.Struct {
 				continue
 			}
-			out = append(out, wire{
-				TemplateID: b.TemplateID,
-				IsDefault:  b.IsDefault,
-				SortOrder:  b.SortOrder,
-				Condition:  b.Condition,
-			})
+			w := wire{}
+			if f := el.FieldByName("TemplateID"); f.IsValid() && f.CanInt() {
+				w.TemplateID = f.Int()
+			}
+			if f := el.FieldByName("IsDefault"); f.IsValid() && f.Kind() == reflect.Bool {
+				w.IsDefault = f.Bool()
+			}
+			if f := el.FieldByName("SortOrder"); f.IsValid() && f.CanInt() {
+				w.SortOrder = int(f.Int())
+			}
+			if f := el.FieldByName("Condition"); f.IsValid() && f.Kind() == reflect.String {
+				w.Condition = f.String()
+			}
+			out = append(out, w)
 		}
 		raw, err := json.Marshal(out)
 		if err != nil {
