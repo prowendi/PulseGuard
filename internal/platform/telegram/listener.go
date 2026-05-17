@@ -105,7 +105,15 @@ type Listener struct {
 	httpC      *http.Client
 	apiBase    string
 	botToken   string
-	botID      int64 // parsed from token prefix
+	botID      int64 // parsed from token prefix (Telegram platform id);
+	//                used for self-recognition in new_chat_members.
+	dbBotID    int64 // PulseGuard internal bot.ID (DB primary key);
+	//                used for dispatcher → CommandRepo.GetByBotAndName,
+	//                whose SQL JOIN keys on bots.id (NOT on the
+	//                telegram-side numeric prefix). The two namespaces
+	//                MUST stay separated; conflating them silently
+	//                breaks every custom-command dispatch (no row
+	//                matches and the listener returns "skip").
 	botName    string
 	tenantID   int64
 	logger     *slog.Logger
@@ -160,6 +168,7 @@ func New(bot *domain.Bot, opts Options) (*Listener, error) {
 		apiBase:    base,
 		botToken:   bot.BotToken,
 		botID:      id,
+		dbBotID:    bot.ID,
 		botName:    bot.Name,
 		tenantID:   bot.TenantID,
 		logger:     logger,
@@ -188,6 +197,11 @@ func parseBotID(token string) (int64, error) {
 //   - HTTP 401   -> returns ErrTokenInvalid
 //   - other err  -> log + sleep 5s + retry indefinitely
 func (l *Listener) Run(ctx context.Context) error {
+	l.logger.Info("telegram: listener started",
+		"bot_id", l.botID,
+		"tenant_id", l.tenantID,
+		"dispatcher", l.dispatcher != nil)
+	defer l.logger.Info("telegram: listener stopped", "bot_id", l.botID)
 	var offset int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -281,6 +295,9 @@ func (l *Listener) handle(ctx context.Context, u update) {
 		return
 	}
 	if l.dispatcher == nil {
+		l.logger.Warn("telegram: custom command received but dispatcher not wired",
+			"bot_id", l.botID, "tenant_id", l.tenantID,
+			"cmd", cmd, "chat_id", msg.Chat.ID)
 		return
 	}
 	name := strings.TrimPrefix(cmd, "/")
@@ -288,14 +305,20 @@ func (l *Listener) handle(ctx context.Context, u update) {
 	if len(tokens) > 1 {
 		args = append(args, tokens[1:]...)
 	}
+	l.logger.Info("telegram: dispatching custom command",
+		"bot_id", l.botID, "tenant_id", l.tenantID,
+		"name", name, "chat_id", msg.Chat.ID, "arg_count", len(args))
 	out, err := l.dispatcher.Dispatch(ctx, DispatchInput{
-		BotID:  l.botID,
+		BotID:  l.dbBotID,
 		ChatID: msg.Chat.ID,
 		Name:   name,
 		Args:   args,
 	})
 	if err != nil {
 		if errors.Is(err, ErrDispatchSkip) {
+			l.logger.Info("telegram: command not registered (skip)",
+				"bot_id", l.botID, "tenant_id", l.tenantID,
+				"name", name)
 			return
 		}
 		// Friendly message; never echo raw Starlark stack traces.
@@ -306,8 +329,12 @@ func (l *Listener) handle(ctx context.Context, u update) {
 		return
 	}
 	if strings.TrimSpace(out.Text) == "" {
+		l.logger.Info("telegram: dispatch returned empty text (no reply sent)",
+			"bot_id", l.botID, "name", name)
 		return
 	}
+	l.logger.Info("telegram: dispatched ok",
+		"bot_id", l.botID, "name", name, "reply_len", len(out.Text))
 	l.replyText(ctx, msg.Chat.ID, out.Text)
 }
 

@@ -101,6 +101,14 @@ func TestListener_CustomCommandDispatched(t *testing.T) {
 	if in.ChatID != 500 {
 		t.Fatalf("chat = %d, want 500", in.ChatID)
 	}
+	// Regression: dispatcher must receive the PulseGuard DB bot.ID
+	// (42 in botFixture), not the Telegram token-prefix id (111111).
+	// Conflating the two silently broke every custom-command lookup
+	// because store.CommandRepo.GetByBotAndName joins on bots.id which
+	// is the DB primary key, not the Telegram numeric id.
+	if in.BotID != 42 {
+		t.Fatalf("BotID = %d, want 42 (DB bot.ID, not Telegram token prefix 111111)", in.BotID)
+	}
 
 	eventually(t, 3*time.Second, func() bool { return len(srv.sentSnapshot()) >= 1 })
 	sent := srv.sentSnapshot()[0]
