@@ -937,6 +937,212 @@ func TestWorkerDLQsWhenNoDefaultTemplate(t *testing.T) {
 	}
 }
 
+// =====================================================================
+// Condition-based auto-routing (V3.B1+)
+// =====================================================================
+
+// newConditionFixture binds three templates to channel 1:
+//   - 100 (default, empty condition, SortOrder=10)
+//   - 200 (Condition `level eq critical`, SortOrder=0)
+//   - 300 (Condition `value gt 90`, SortOrder=1)
+//
+// Bindings are intentionally returned in SortOrder ASC order — exactly
+// how channel_repo.loadBindings hydrates the slice — so pickTemplateID
+// walks them in the same order the production code sees.
+func newConditionFixture(t *testing.T, sender domain.Sender) *workerFixture {
+	t.Helper()
+	clk := &domain.FakeClock{T: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)}
+	chans := &fakeChannelRepo{m: map[int64]*domain.Channel{
+		1: {ID: 1, TenantID: 1, Name: "c", BotID: 10, ChatID: "12345", RatePerMin: 60, Enabled: true,
+			Templates: []*domain.ChannelTemplate{
+				{ChannelID: 1, TemplateID: 200, IsDefault: false, SortOrder: 0, Condition: "level eq critical"},
+				{ChannelID: 1, TemplateID: 300, IsDefault: false, SortOrder: 1, Condition: "value gt 90"},
+				{ChannelID: 1, TemplateID: 100, IsDefault: true, SortOrder: 10, Condition: ""},
+			},
+		},
+	}}
+	bots := &fakeBotRepo{m: map[int64]*domain.Bot{
+		10: {ID: 10, TenantID: 1, Name: "b", BotToken: "TOKEN"},
+	}}
+	tpls := &fakeTplRepo{m: map[int64]*domain.Template{
+		100: {ID: 100, TenantID: 1, Name: "default", ParseMode: domain.ParseMarkdownV2, Body: "Default {{ .name }}"},
+		200: {ID: 200, TenantID: 1, Name: "critical", ParseMode: domain.ParseMarkdownV2, Body: "CRIT {{ .name }}"},
+		300: {ID: 300, TenantID: 1, Name: "highval", ParseMode: domain.ParseMarkdownV2, Body: "HIGH {{ .name }}"},
+	}}
+	logBuf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	deps := WorkerDeps{
+		Outbox:    newFakeOutbox(),
+		Channels:  chans,
+		Bots:      bots,
+		Templates: tpls,
+		Logs:      &fakeLogRepo{},
+		DLQ:       &fakeDLQ{},
+		RL:        &fakeRL{allow: true},
+		Sender:    sender,
+		Clock:     clk,
+		Logger:    logger,
+	}
+	cfg := WorkerCfg{WorkerID: "w1", PollInterval: 10 * time.Millisecond, MaxAttempts: 6, Backoff: DefaultBackoff()}
+	w := New(deps, cfg)
+	return &workerFixture{
+		outbox: deps.Outbox.(*fakeOutbox),
+		logs:   deps.Logs.(*fakeLogRepo),
+		dlq:    deps.DLQ.(*fakeDLQ),
+		chans:  chans,
+		bots:   bots,
+		tpls:   tpls,
+		rl:     deps.RL.(*fakeRL),
+		clk:    clk,
+		w:      w,
+		logBuf: logBuf,
+	}
+}
+
+// enqueueWithPayload writes a fresh outbox row carrying the supplied
+// payload JSON so condition tests can drive the worker with whatever
+// fields they need without copy-pasting outbox boilerplate.
+func (f *workerFixture) enqueueWithPayload(t *testing.T, payloadJSON string) *domain.PushOutbox {
+	t.Helper()
+	now := f.clk.Now()
+	item := &domain.PushOutbox{
+		ChannelID:     1,
+		TenantID:      1,
+		PayloadJSON:   payloadJSON,
+		Status:        domain.OutboxPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	id, err := f.outbox.Insert(context.Background(), item)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	item.ID = id
+	return item
+}
+
+// TestWorkerConditionEqHits proves the condition `level eq critical`
+// routes the payload to template 200 even though template 100 is the
+// channel default — the auto-route MUST win over the default fallback.
+func TestWorkerConditionEqHits(t *testing.T) {
+	sender := &recordingSender{}
+	f := newConditionFixture(t, sender)
+	item := f.enqueueWithPayload(t, `{"name":"world","level":"critical"}`)
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "CRIT ") {
+		t.Fatalf("text = %q want CRIT-prefixed (template 200)", text)
+	}
+}
+
+// TestWorkerConditionMissFallsBackToDefault: no binding's condition
+// matches, so the default (template 100) handles the payload.
+func TestWorkerConditionMissFallsBackToDefault(t *testing.T) {
+	sender := &recordingSender{}
+	f := newConditionFixture(t, sender)
+	item := f.enqueueWithPayload(t, `{"name":"world","level":"info","value":5}`)
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "Default ") {
+		t.Fatalf("text = %q want Default-prefixed (template 100)", text)
+	}
+}
+
+// TestWorkerConditionSortOrderWins exercises multi-condition routing:
+// payload satisfies BOTH `level eq critical` (binding 200, SortOrder 0)
+// AND `value gt 90` (binding 300, SortOrder 1). The lower SortOrder
+// must win so 200 is the chosen template.
+func TestWorkerConditionSortOrderWins(t *testing.T) {
+	sender := &recordingSender{}
+	f := newConditionFixture(t, sender)
+	item := f.enqueueWithPayload(t, `{"name":"world","level":"critical","value":99}`)
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "CRIT ") {
+		t.Fatalf("text = %q want CRIT (sort_order 0), not HIGH", text)
+	}
+}
+
+// TestWorkerConditionNumericHits hits the second binding only — proves
+// the iteration continues past a non-matching condition and that gt is
+// evaluated numerically against JSON float64.
+func TestWorkerConditionNumericHits(t *testing.T) {
+	sender := &recordingSender{}
+	f := newConditionFixture(t, sender)
+	item := f.enqueueWithPayload(t, `{"name":"world","value":95}`)
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "HIGH ") {
+		t.Fatalf("text = %q want HIGH-prefixed (template 300)", text)
+	}
+}
+
+// TestWorkerExplicitTemplateIDBypassesConditions confirms that an
+// explicit _template_id in the payload short-circuits condition
+// evaluation entirely — the caller's choice wins even if a condition
+// would otherwise route somewhere else.
+func TestWorkerExplicitTemplateIDBypassesConditions(t *testing.T) {
+	sender := &recordingSender{}
+	f := newConditionFixture(t, sender)
+	// Payload satisfies `level eq critical` (would route to 200) but
+	// caller explicitly demands template 100 (the default).
+	item := f.enqueueWithPayload(t, `{"name":"world","level":"critical","_template_id":100}`)
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "Default ") {
+		t.Fatalf("text = %q want Default — explicit _template_id must win over condition match", text)
+	}
+}
+
+// TestWorkerMalformedConditionSkipped: a binding with a garbage
+// condition string must NOT crash the worker — it is skipped, and the
+// next valid binding (or the default) handles the payload.
+func TestWorkerMalformedConditionSkipped(t *testing.T) {
+	sender := &recordingSender{}
+	f := newConditionFixture(t, sender)
+	// Replace the first binding's condition with garbage. The second
+	// binding's `value gt 90` still matches, so template 300 should
+	// fire — proving the malformed condition was skipped, not crashed.
+	f.chans.m[1].Templates[0].Condition = "this is not a condition"
+	item := f.enqueueWithPayload(t, `{"name":"world","value":99}`)
+
+	if _, err := f.w.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := f.outbox.get(item.ID); got.Status != domain.OutboxSent {
+		t.Fatalf("status = %q want sent", got.Status)
+	}
+	if text := sender.lastText(); !strings.HasPrefix(text, "HIGH ") {
+		t.Fatalf("text = %q want HIGH (malformed cond skipped, value gt 90 still matched)", text)
+	}
+}
+
 func itoa(v int64) string {
 	// Avoid importing strconv just for the test helper; the worker test
 	// file already pulls in fmt indirectly via testing assertions, but we

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/wendi/pulseguard/internal/condeval"
 	"github.com/wendi/pulseguard/internal/domain"
 	"github.com/wendi/pulseguard/internal/render"
 	"github.com/wendi/pulseguard/internal/tg"
@@ -401,7 +402,18 @@ func decodePayload(raw string) map[string]any {
 //  2. payload["_template"] (string) — case-insensitive name match
 //     against the channel's bound templates (fallback for direct
 //     enqueue paths that did not pre-resolve).
-//  3. channel default template (channel_templates.is_default = 1).
+//  3. condition match — walk channel.Templates in SortOrder ASC and
+//     return the first binding whose non-empty Condition evaluates
+//     true against the payload (internal/condeval). Empty conditions
+//     are skipped here; they participate only as default-eligible
+//     candidates (rule 4).
+//  4. channel default template (channel_templates.is_default = 1).
+//
+// A malformed condition string is treated as a non-match and ignored
+// for routing purposes — bad input must not crash the worker nor send
+// the payload through an unintended template. The operator surfaces
+// the typo through the UI (and condition fields are validated on
+// write), not via runtime detonation.
 //
 // Returns 0 when no template can be selected; the worker DLQs the row.
 func pickTemplateID(ch *domain.Channel, payload map[string]any) (int64, error) {
@@ -436,6 +448,23 @@ func pickTemplateID(ch *domain.Channel, payload map[string]any) (int64, error) {
 		// a name. Worker callers (web/push_api.go) always pre-resolve
 		// to _template_id so this is best-effort only.
 		_ = v
+	}
+	// Condition-based auto-routing. Bindings are pre-sorted (loadBindings
+	// orders by sort_order ASC, template_id ASC) so the iteration order
+	// is deterministic and matches operator intent.
+	for _, ct := range ch.Templates {
+		if ct == nil || ct.Condition == "" {
+			continue
+		}
+		cond, err := condeval.Parse(ct.Condition)
+		if err != nil {
+			// Malformed condition: skip and continue. Worth surfacing
+			// via the audit log eventually, but never crash the worker.
+			continue
+		}
+		if cond.Match(payload) {
+			return ct.TemplateID, nil
+		}
 	}
 	return ch.DefaultTemplateID(), nil
 }
